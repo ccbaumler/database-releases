@@ -11,6 +11,7 @@ import random
 import sys
 import csv
 
+
 configfile: "config/allthebacteria.yaml"
 
 EMAIL=config.get('email')

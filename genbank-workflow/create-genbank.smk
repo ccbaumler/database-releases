@@ -39,6 +39,10 @@ wildcard_constraints:
     ND = "\w[^-]+",
     d = "\d+",
 
+# Dictionary for dynamic slurm batch allocations with correct resources
+#PART_JOBS = {1: ['low2', 1], 2: ['low2', 1], 3: ['med2', 33], 4: ['med2', 33], 5: ['high2', 100]}
+PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['bmh', 100]}
+
 # Create a file dictionary for normal and test runs for rule cheat_mainfest
 def getInputFilesForManifest(wildcards):
     files = dict()
@@ -142,8 +146,8 @@ rule gather_sketch_db:
     conda: "envs/directsketch.yaml",
     resources:
         mem_mb =  100 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 24 * 60 * attempt,
         allowed_jobs = 100,
         partition = "bmh",
     threads: 3
@@ -164,8 +168,8 @@ rule extract_db:
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = 80 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 24 * 60 * attempt,
         allowed_jobs = 100,
         partition = "bmh",
     shell:"""

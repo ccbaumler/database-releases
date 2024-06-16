@@ -17,9 +17,10 @@ email: 'ccbaumler@ucdavis.edu'
 #  - 202405030
 
 update_to_date:
+  - 20240516
 
 update_from_date:
-  - 20240516
+  - "2022.03"
 
 # This is the output path to place 
 # all the final output directories
@@ -34,7 +35,7 @@ update_from_date:
 
 # examples = output_directory: 'elsewhere'
 
-output_directory: 'test' 
+output_directory:
 
 # The genbank domains you would like
 # to create a sourmash database from
@@ -71,6 +72,4 @@ k_values:
 # downsample.
 
 # example =
-#scale_value: 1000
-
 scale_value: 1000

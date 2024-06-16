@@ -42,6 +42,10 @@ wildcard_constraints:
     D = "\w[^-.]+",
     d = "\d+",
 
+# Dictionary for dynamic slurm batch allocations with correct resources
+#PART_JOBS = {1: ['low2', 1], 2: ['low2', 1], 3: ['med2', 33], 4: ['med2', 33], 5: ['high2', 100]}
+PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['bmh', 100]}
+
 rule all:
     input:
         expand("{o}/genbank-{d}-{D}-k{k}.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
@@ -117,6 +121,12 @@ rule manifest_manifest:
     conda: "envs/sourmash.yaml",
     params:
         old_date=OLD_DATES,
+    resources:
+        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/mf.{o}-{d}-{D}-k{k}.tsv'
     shell: """
@@ -139,6 +149,12 @@ rule cleanse_manifest:
         report = "{o}/data/report.{d}-{D}-k{k}.txt",
         missing = "{o}/data/missing-genomes.{d}-{D}-k{k}.csv",
     conda: "envs/sourmash.yaml",
+    resources:
+        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/cleanse_manifest.{o}-{d}-{k}-{D}.tsv'
     shell: """
@@ -154,6 +170,12 @@ rule picklist_clean_db:
     conda: "envs/sourmash.yaml",
     params:
         old_date = OLD_DATES
+    resources:
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/picklist_clean_db.{o}-{d}-{D}-k{k}.tsv'
     shell:'''
@@ -170,6 +192,12 @@ rule check_txt_reversioned:
         script = "scripts/check_txt_files.py",
     output:
         solo = "{o}/data/update.{d}-{D}.csv",
+    resources:
+        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/check_txt_reversioned.{o}-{d}-{D}.tsv'
     shell: """
@@ -191,7 +219,11 @@ rule gather_sketch_reversioned:
         'benchmarks/gather_sketch_reversioned.{o}-{d}-{D}.tsv'
     threads: 3
     resources:
-        allowed_jobs = 100
+        mem_mb = 100 * 1024,
+        time = lambda wildcards, attempt: 12 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        allowed_jobs=100,
+        partition="bmh",
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
@@ -210,6 +242,12 @@ rule cat_to_clean_reversioned:
     output:
         woohoo = temporary("{o}/genbank-{d}-{D}-k{k}.update.zip"),
     conda: "envs/sourmash.yaml"
+    resources:
+        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=100,
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/cat_to_clean_reversioned.{o}-{d}-{D}-k{k}.tsv'
     shell: """
@@ -222,6 +260,12 @@ rule check_txt_missing:
         script = "scripts/check_txt_files.py",
     output:
         solo = "{o}/data/missing.{d}-{D}.csv",
+    resources:
+        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     benchmark:
         'benchmarks/check_txt_missing.{o}-{d}-{D}.tsv'
     shell: """
@@ -239,19 +283,22 @@ rule gather_sketch_missing:
         failed = "{o}/data/missing.{d}-{D}.failures.csv",
         db = temporary("{o}/genbank-{d}-{D}.miss.zip"),
     conda: "envs/directsketch.yaml"
+    resources:
+        mem_mb = 100 * 1024,
+        time = lambda wildcards, attempt: 12 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        allowed_jobs=100,
+        partition="bmh",
     benchmark:
         'benchmarks/gather_sketch_missing.{o}-{d}-{D}.tsv'
     threads: 3
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
-    log:
-        "logs/gather_sketch_missing.{o}_{d}_{D}.log"
-    resources:
-        allowed_jobs = 100
+        log = "logs/gather_sketch_missing.{d}_{D}.log"
     shell:'''
         sourmash scripts gbsketch {input.missing} -o {output.db} --failed {output.failed} \
-            --param-str "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {log}
+            --param-str "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {params.log}
     '''
 
 checkpoint cat_to_clean_missing:
@@ -265,7 +312,11 @@ checkpoint cat_to_clean_missing:
         'benchmarks/cat_to_clean_missing.{o}-{d}-{D}-k{k}.tsv',
     conda: "envs/sourmash.yaml"
     resources:
-        allowed_jobs = 100
+        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=100,
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
         sourmash sig cat {input.dir} {input.db} -k {wildcards.k} -o {output.woohoo}
     """
