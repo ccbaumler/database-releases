@@ -43,7 +43,7 @@ for file in FILES:
         dir_name_list = [os.path.basename(f).split(".")[0] for f in file_list]
 
         if config.get('output_directory') == 'test':
-            selected_line = random.choice(file_list)
+            selected_line = random.sample(file_list, 5) #random.choice(file_list)
             dir_name_list = [os.path.basename(selected_line).split(".")[0]]
 
             directory_path = f"test/allthebacteria-r{release}"
