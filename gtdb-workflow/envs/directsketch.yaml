@@ -1,0 +1,9 @@
+name: directsketch
+channels:
+- conda-forge
+- bioconda
+- defaults
+dependencies:
+- pip
+- pip:
+  - sourmash_plugin_directsketch==0.3.1
