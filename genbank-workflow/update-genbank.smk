@@ -107,34 +107,22 @@ rule get_ss_db:
             fi
    """
 
-# Does this need to be updated because some scripts are not on main branches?
-rule download_update_sourmash_dbs:
-    output: "scripts/update_sourmash_dbs.py"
-    shell: """
-        curl -L "https://raw.githubusercontent.com/ccbaumler/2024-database-create/manifests/workflow/scripts/update_sourmash_dbs.py" > {output}
-    """
-
-rule manifest_manifest:
+rule collect_all:
     input:
-        dbs = f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip",
-    output: "{o}/data/mf.{d}-{D}-k{k}.csv",
-    conda: "envs/sourmash.yaml",
+        dbs = lambda wildcards: expand(f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip", D = [wildcards.D], k = KSIZES[0])
+    output:
+        db = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
     params:
-        old_date=OLD_DATES,
+        first_k = lambda wildcards: KSIZES[0],
+    conda: "envs/sourmash.yaml",
     resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    benchmark:
-        'benchmarks/mf.{o}-{d}-{D}-k{k}.tsv'
     shell: """
-        for db_file in {input}; do
-            if [[ $db_file == *{wildcards.D}*{wildcards.k}* ]]; then
-                sourmash sig manifest -o {output} $db_file --no-rebuild
-            fi
-        done
+        sourmash sig collect {input.dbs} -k {params.first_k} -F csv -o {output.db}
     """
 
 rule cleanse_manifest:
@@ -142,28 +130,26 @@ rule cleanse_manifest:
         script = "scripts/update_sourmash_dbs.py",
         good = "{o}/data/assembly_summary.{D}.txt",
         bad = "{o}/data/assembly_summary_historical.{D}.txt",
-        manifest = "{o}/data/mf.{d}-{D}-k{k}.csv",
+        manifest = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
     output:
-        clean = "{o}/data/mf-clean.{d}-{D}-k{k}.csv",
-        reversion = "{o}/data/updated-versions.{d}-{D}-k{k}.csv",
-        report = "{o}/data/report.{d}-{D}-k{k}.txt",
-        missing = "{o}/data/missing-genomes.{d}-{D}-k{k}.csv",
+        clean = "{o}/data/mf-clean.{d}-{D}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
+        report = "{o}/data/report.{d}-{D}.txt",
+        missing = "{o}/data/missing-genomes.{d}-{D}.csv",
     conda: "envs/sourmash.yaml",
     resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    benchmark:
-        'benchmarks/cleanse_manifest.{o}-{d}-{k}-{D}.tsv'
     shell: """
         {input.script} {input.manifest} -a {input.good} -b {input.bad} -o {output.clean} --updated-version {output.reversion} --report {output.report} --missing-genomes {output.missing}
     """
 
 rule picklist_clean_db:
     input:
-        clean = "{o}/data/mf-clean.{d}-{D}-k{k}.csv",
+        clean = "{o}/data/mf-clean.{d}-{D}.csv",
         dbs = f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip",
     output:
         woohoo = temporary("{o}/genbank-{d}-{D}-k{k}.clean.zip"),
@@ -179,38 +165,14 @@ rule picklist_clean_db:
     benchmark:
         'benchmarks/picklist_clean_db.{o}-{d}-{D}-k{k}.tsv'
     shell:'''
-        if [ ! -e {output.woohoo} ]; then
-            echo "Cleaning {input.dbs}..."
-            sourmash sig extract --picklist {input.clean}::manifest {input.dbs} -o {output.woohoo}
-            echo "{input.dbs} cleaned and stored as {output.woohoo}"
-        fi
+        echo "Cleaning {input.dbs}..."
+        sourmash sig cat {input.dbs} --picklist {input.clean}:name:name -k {wildcards.k} -o {output.woohoo}
+        echo "{input.dbs} cleaned and stored as {output.woohoo}"
     '''
-
-rule check_txt_reversioned:
-    input:
-        reversion = expand("{o}/data/updated-versions.{d}-{D}-k{k}.csv", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
-        script = "scripts/check_txt_files.py",
-    output:
-        solo = "{o}/data/update.{d}-{D}.csv",
-    resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    benchmark:
-        'benchmarks/check_txt_reversioned.{o}-{d}-{D}.tsv'
-    shell: """
-        files=""
-        for file in "{wildcards.o}/data/updated-versions.*{wildcards.d}-{wildcards.D}-k*.csv"; do
-            files+=" $file"
-        done
-        {input.script} $files -o {output.solo}
-    """
 
 rule gather_sketch_reversioned:
     input:
-        reversion = "{o}/data/update.{d}-{D}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
     output:
         failed = "{o}/data/update.{d}-{D}.failures.csv",
         db = temporary("{o}/genbank-{d}-{D}.rever.zip"),
@@ -254,33 +216,11 @@ rule cat_to_clean_reversioned:
         sourmash sig cat {input.dir} {input.db} -k {wildcards.k} -o {output.woohoo}
     """
 
-rule check_txt_missing:
-    input:
-        missing = expand("{o}/data/missing-genomes.{d}-{D}-k{k}.csv", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
-        script = "scripts/check_txt_files.py",
-    output:
-        solo = "{o}/data/missing.{d}-{D}.csv",
-    resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    benchmark:
-        'benchmarks/check_txt_missing.{o}-{d}-{D}.tsv'
-    shell: """
-        files=""
-        for file in "{wildcards.o}/data/missing-genomes.*{wildcards.d}-{wildcards.D}-k*.csv"; do
-            files+=" $file"
-        done
-        {input.script} $files -o {output.solo}
-    """
-
 rule gather_sketch_missing:
     input:
-         missing = "{o}/data/missing.{d}-{D}.csv",
+         missing = "{o}/data/missing-genomes.{d}-{D}.csv",
     output:
-        failed = "{o}/data/missing.{d}-{D}.failures.csv",
+        failed = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
         db = temporary("{o}/genbank-{d}-{D}.miss.zip"),
     conda: "envs/directsketch.yaml"
     resources:
@@ -289,8 +229,6 @@ rule gather_sketch_missing:
         runtime = lambda wildcards, attempt: 12 * 60 * attempt,
         allowed_jobs=100,
         partition="bmh",
-    benchmark:
-        'benchmarks/gather_sketch_missing.{o}-{d}-{D}.tsv'
     threads: 3
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
@@ -305,11 +243,8 @@ checkpoint cat_to_clean_missing:
     input:
         dir = "{o}/genbank-{d}-{D}.miss.zip",
         db = "{o}/genbank-{d}-{D}-k{k}.clean.zip",
-        missing = "{o}/data/missing.{d}-{D}.failures.csv",
     output:
         woohoo = protected("{o}/genbank-{d}-{D}-k{k}.zip"),
-    benchmark:
-        'benchmarks/cat_to_clean_missing.{o}-{d}-{D}-k{k}.tsv',
     conda: "envs/sourmash.yaml"
     resources:
         mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,

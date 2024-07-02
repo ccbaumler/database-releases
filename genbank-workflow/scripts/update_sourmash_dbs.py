@@ -144,7 +144,7 @@ def write_links_output(gather_ident_list, links):
                 line = f"{accession},{name},{url}\n"
                 fp.write(line)
 
-        print(f'...Wrote {links}: Line {n+1} of {total}  ')
+        print(f'\n...Wrote {links}: Line {n+1} of {total}  ')
 
 
 def main():
@@ -155,36 +155,73 @@ def main():
     p.add_argument('-o', '--output', nargs='?', help='manifest cleansed of the impure')
     p.add_argument('-u', '--updated-version', help='Output a CSV file where each line is the updated versions of genomes existing in old manifest')
     p.add_argument('-m', '--missing-genomes', help='Output a CSV file where each line is a missing genome from old manifest when compared to current database')
+    p.add_argument('-l', '--all-links', help='Output a CSV file of the full input manifest with updated versions')
     p.add_argument('-a', help='the Genbank assembly summary text file')
     p.add_argument('-b', help='the Genbank assembly summary history text file')
 
     args = p.parse_args()
 
-    print(f"Loading assembly summary from '{args.a}'")
+    print(f"\nLoading assembly summary from '{args.a}'")
     good_idents, good_idents_no_version = load_summary(args.a, summary_type = 'assembly')
-    print(f"Loaded {len(good_idents)} identifiers and {len(good_idents_no_version)} identifiers without version number")
+    print(f"\nLoaded {len(good_idents)} identifiers and {len(good_idents_no_version)} identifiers without version number")
 
-    print(f"Loading historical summary from '{args.b}'")
+    print(f"\nLoading historical summary from '{args.b}'")
     bad_idents, bad_idents_dict = load_summary(args.b, summary_type = 'historic')
-    print(f"Loaded {len(bad_idents)} identifiers")
+    print(f"\nLoaded {len(bad_idents)} identifiers and {len(bad_idents_dict)} identifiers with multiple versions")
 
-    print(f"Loading old manifest from '{args.old_mf}'")
-    old_mf = manifest.CollectionManifest.load_from_filename(args.old_mf)
-    print(f"Loaded manifest with {len(old_mf.rows)} rows")
 
-    keep_rows, removed_list, updated_version_list, updated_version_no_ident_list, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
+    ident = None
+    new_mf = None
+
+    try:
+        print(f"\nTrying to load Sourmash Manifest from {args.old_mf}...")
+        old_mf = manifest.BaseCollectionManifest.load_from_filename(args.old_mf)
+        print(f"Loaded manifest with {len(old_mf.rows)} rows")
+
+        keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
+
+        new_mf = manifest.CollectionManifest(keep_rows)
+
+    except ValueError as e:
+        print(f"\nValueError when processing Sourmash Manifest: {e}")
+        print("Attempting to find 'ident' in header...")
+
+        old_mf = GeneralManifestHandler(args.old_mf)
+        ident = old_mf.find_ident_header()
+        print(f"Using 'ident' column in {args.old_mf}")
+
+        if ident:
+            old_mf.read_csv()
+
+            print(f"Loaded manifest with {len(old_mf.rows)} rows")
+            keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict, ident=True)
+
+        else:
+            print("No Sourmash Manifest or 'ident' column found... \nExiting script")
+            sys.exit(1)
+
+    good_doc_gen_list = list(row_generator(args.a))
 
     if args.missing_genomes:
-        good_doc_gen = row_generator(args.a)
         keep_rows_set = {get_suffix(row['name']) for row in keep_rows}
-        gather_ident_list = [row for row in good_doc_gen if get_suffix(row[0]) not in keep_rows_set]
+        gather_ident_list = [row for row in good_doc_gen_list if get_suffix(row[0]) not in keep_rows_set]
 
         write_links_output(gather_ident_list, args.missing_genomes)
 
     if args.updated_version:
-        good_doc_gen = row_generator(args.a)
-        gather_ident_list = [row for row in good_doc_gen if get_suffix_no_version(row[0]) in updated_version_no_ident_list]
+        gather_ident_list = [row for row in good_doc_gen_list if get_suffix_no_version(row[0]) in updated_version_no_ident_set]
         write_links_output(gather_ident_list, args.updated_version)
+
+    if args.all_links:
+        kept_set = {get_suffix(row['ident']) if ident else get_suffix(row['name']) for row in keep_rows}
+
+        gather_ident_list = [
+            row for row in good_doc_gen_list
+            if get_suffix(row[0]) in kept_set or get_suffix_no_version(row[0]) in updated_version_no_ident_set
+        ]
+
+        write_links_output(gather_ident_list, args.all_links)
+
 
     new_mf = manifest.CollectionManifest(keep_rows)
 
@@ -236,7 +273,7 @@ def main():
             print(f"---- {n_changed_version} removed because version changed ----", file=fp)
             print("\n".join(updated_version_list), file=fp)
 
-        print(f'... Wrote {args.report}')
+        print(f'\n... Wrote {args.report}')
 
 
 if __name__ == '__main__':
