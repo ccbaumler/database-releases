@@ -35,12 +35,12 @@ PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['
 
 wildcard_constraints:
     k = "\d{2}+",
-    R = "\w[^-.]+",
+    r = "\d[^-.]+",
     OR = "\w[^-.]+",
 
 rule all:
     input:
-#        expand("{o}/gtdb-rs{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
+        expand("{o}/gtdb-rs{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}-k{k}.clean.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}.lineages.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/gtdb-{r}.clean-existing.csv", o=OUTDIR, r=RELEASES),
@@ -143,27 +143,6 @@ rule make_taxonomy:
                -o {output.tax_csv} --reps-csv {output.reps_csv}
         """
 
-rule manifest_manifest:
-    input:
-        dbs = f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip",
-    output: f"{{o}}/data/mf.{OLD_RELEASES}-k{{k}}.csv",
-    conda: "envs/sourmash.yaml",
-    params:
-        o_r = OLD_RELEASES,
-    resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    shell: """
-        for db_file in {input}; do
-            if [[ $db_file == *{params.o_r}*{wildcards.k}* ]]; then
-                sourmash sig manifest -o {output} $db_file --no-rebuild
-            fi
-        done
-    """
-
 rule collect_all:
     input:
         dbs = expand(f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip", k = KSIZES)
@@ -234,7 +213,7 @@ rule cleanse_missing:
         manifest = "{o}/data/gtdb-{r}.missing.csv",
     output:
         clean = "{o}/data/gtdb-{r}.clean-missing.csv",
-        reversion = "{o}/data/gtdb-{r}.updated-versions-missing.csv",
+        all_links = "{o}/data/gtdb-{r}.all-missing-links.csv",
         report = "{o}/data/report-missing.{r}.txt",
     conda: "envs/sourmash.yaml",
     resources:
@@ -244,7 +223,7 @@ rule cleanse_missing:
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
-        {input.script} {input.manifest} -a {input.good} -b {input.bad} -o {output.clean} --updated-version {output.reversion} --report {output.report}
+        {input.script} {input.manifest} -a {input.good} -b {input.bad} -o {output.clean} --all-links {output.all_links} --report {output.report}
     """
 
 rule gather_sketch_existing:
@@ -272,10 +251,10 @@ rule gather_sketch_existing:
 
 rule gather_sketch_missing:
     input:
-        missing = "{o}/data/gtdb-{r}.updated-versions-missing.csv",
+        missing = "{o}/data/gtdb-{r}.all-missing-links.csv",
     output:
-        failed = "{o}/data/gtdb-{r}.updated-versions-missing.failures.csv",
-        db = temporary("{o}/gtdb-{r}.updated-versions-missing.zip"),
+        failed = "{o}/data/gtdb-{r}.all-missing-links.failures.csv",
+        db = temporary("{o}/gtdb-{r}.all-missing-links.zip"),
     conda: "envs/directsketch.yaml"
     resources:
         mem_mb = 100 * 1024,
@@ -288,29 +267,6 @@ rule gather_sketch_missing:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         scale = config.get('scale_value'),
         log = "logs/gather_sketch_missing.{r}.log"
-    shell:'''
-        sourmash scripts gbsketch {input.missing} -o {output.db} --failed {output.failed} \
-            --param-str "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {params.log}
-    '''
-
-rule gather_sketch:
-    input:
-        missing = "{o}/data/gtdb-{r}.clean-missing.csv",
-    output:
-        failed = "{o}/data/gtdb-{r}.clean-missing.failures.csv",
-        db = temporary("{o}/gtdb-{r}.clean-missing.zip"),
-    conda: "envs/directsketch.yaml"
-    resources:
-        mem_mb = 100 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
-        allowed_jobs=100,
-        partition="bmh",
-    threads: 3
-    params:
-        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
-        scale = config.get('scale_value'),
-        log = "logs/gather_sketch.{r}.log"
     shell:'''
         sourmash scripts gbsketch {input.missing} -o {output.db} --failed {output.failed} \
             --param-str "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {params.log}
@@ -334,8 +290,27 @@ rule extract_db:
     """
 
 # Then need to combine everything into a single database
-
 #        dbs = "{o}/gtdb-rs{r}-k{k}.clean.zip",
 #        db = temporary("{o}/gtdb-{r}.clean-missing.zip"),
 #        db = temporary("{o}/gtdb-{r}.updated-versions-missing.zip"),
 #        db = temporary("{o}/gtdb-{r}.updated-versions-existing.zip"),
+
+rule final_db:
+    input:
+        old_existing = "{o}/gtdb-rs{r}-k{k}.clean.zip",
+        updated_existing = "{o}/gtdb-{r}.updated-versions-existing.zip",
+        updated_missing = "{o}/gtdb-{r}.all-missing-links.zip",
+    output:
+        woohoo = "{o}/gtdb-rs{r}-k{k}.zip"
+    conda: "envs/sourmash.yaml",
+    resources:
+        mem_mb = 80 * 1024,
+        time = lambda wildcards, attempt: 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 24 * 60 * attempt,
+        allowed_jobs = 100,
+        partition = "bmh",
+    shell:"""
+        sourmash signature cat \
+            {input.old_existing} {input.updated_existing} {input.updated_missing} \
+            -k {wildcards.k} -o {output.woohoo}
+    """
