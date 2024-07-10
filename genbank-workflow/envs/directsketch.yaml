@@ -6,4 +6,4 @@ channels:
 dependencies:
 - pip
 - pip:
-  - sourmash_plugin_directsketch==0.3.1
+  - sourmash_plugin_directsketch==0.3.2

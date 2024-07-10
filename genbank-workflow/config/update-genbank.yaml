@@ -17,7 +17,7 @@ email: 'ccbaumler@ucdavis.edu'
 #  - 202405030
 
 update_to_date:
-  - 20240516
+  - 20240628
 
 update_from_date:
   - "2022.03"
@@ -35,7 +35,7 @@ update_from_date:
 
 # examples = output_directory: 'elsewhere'
 
-output_directory:
+output_directory: '/group/ctbrowngrp4/2024-ccbaumler-genbank'
 
 # The genbank domains you would like
 # to create a sourmash database from
@@ -47,10 +47,10 @@ output_directory:
 
 domains:
   - 'viral'
-#  - 'protozoa'
-#  - 'archaea'
-#  - 'bacteria'
-#  - 'fungi'
+  - 'protozoa'
+  - 'archaea'
+  - 'bacteria'
+  - 'fungi'
 
 # The sourmash kmer size you
 # would like to sketch as your

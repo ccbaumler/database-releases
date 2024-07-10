@@ -1,0 +1,101 @@
+---
+title: "`r params$report_title`"
+date: last-modified
+date-format: "dddd, [the] D[<sup style='font-size:65%;font-style:italic;'>th</sup>] [of] MMMM, YYYY"
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  echo: false
+  warning: false
+params:
+  report_title: Database report
+  old_details: default_old_date
+  new_details: default_new_date
+  details_files: default_details
+  old_db: default_old_db,dft_o
+  new_db: default_new_db,dft_n
+  old_mf: default_old_mf
+  new_mf: default_new_mf
+  failures: default_failures
+---
+
+```{r}
+library(stringr)
+```
+
+```{r}
+library(reticulate)
+use_condaenv( condaenv = Sys.getenv("CONDA_PREFIX"), required = TRUE)
+```
+
+## Database updated from `r params$old_details` to `r params$new_details`
+
+```{r}
+new_db_lst <- str_split(params$new_db, ",")
+old_db_lst <- str_split(params$old_db, ",")
+
+for (i in seq_along(new_db_lst[[1]])) {
+    new_name <- new_db_lst[[1]][i]
+    old_name <- old_db_lst[[1]][i]
+
+    lst <- paste("  Updated", old_name, "to create", basename(new_name))
+    cat(lst, "\n\n")
+}
+```
+
+## Sourmash summary of first K-value in databases
+
+The manifest for `r old_db_lst[[1]][1]`:
+
+```{python}
+import argparse
+import re
+import sourmash
+
+#sig_files = r.params.get('new_db').split(',')
+#sigs = [sourmash.load_one_signature(sig, ksize=31) for sig in sig_files]
+#summary = sourmash.summarize(sigs)
+
+def escape_ansi(line):
+    ansi_escape = re.compile(r"(?:\x1B[@-_]|[\x80-\x9F])[0-?]*[ -/]*[@-~]")
+    return ansi_escape.sub("", line)
+
+args = argparse.Namespace()
+args.quiet = False
+args.debug = False
+args.json_out = False
+args.force = False
+args.rebuild_manifest = False
+args.path = r.params.get('old_mf')
+
+sourmash.sig.fileinfo(args=args)
+```
+
+The manifest for `r new_db_lst[[1]][1]`:
+
+```{python}
+args.path = r.params.get('new_mf')
+
+sourmash.sig.fileinfo(args=args)
+
+```
+
+## Genome report for the updated database 
+
+```{r}
+writeLines(readLines(params$details_files, n=5))
+
+sent <- paste("For more details, read ", params$details_files, "\n in the `data` directory")
+cat(sent)
+```
+
+## Genomes failed to download or sketch
+
+::: {.callout-note collapse="true"}
+## Expand for details
+```{r}
+writeLines(readLines(params$failures))
+```
+:::
