@@ -46,10 +46,22 @@ wildcard_constraints:
 #PART_JOBS = {1: ['low2', 1], 2: ['low2', 1], 3: ['med2', 33], 4: ['med2', 33], 5: ['high2', 100]}
 PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['bmh', 100]}
 
+# Create a file dictionary for normal and test runs for rule cheat_mainfest
+def getInputFilesForManifest(wildcards):
+    files = dict()
+    if config.get('output_directory') == 'test':
+        files["good"] = f"{wildcards.o}/data/sub_assembly_summary.{wildcards.D}.txt"
+        files["bad"] = f"{wildcards.o}/data/sub_assembly_summary_historical.{wildcards.D}.txt"
+    else:
+        files["good"] = f"{wildcards.o}/data/assembly_summary.{wildcards.D}.txt"
+        files["bad"] = f"{wildcards.o}/data/assembly_summary_historical.{wildcards.D}.txt"
+    return files
+
 rule all:
     input:
         expand("{o}/genbank-{d}-{D}-k{k}.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
         expand("{o}/lineages.{D}.csv", o=outdir, D=DOMAINS),
+        expand("{o}/report/report.{d}-{D}.html", o=outdir, d=DATE, D=DOMAINS),
 
 rule build_genbank:
     input:
@@ -74,12 +86,53 @@ rule tax_genbank:
 rule download_assembly_summary:
     output:
         good = '{o}/data/assembly_summary.{D}.txt',
-        bad = '{o}/data/assembly_summary_historical.{D}.txt',
-    benchmark:
-        'benchmarks/download_assembly_summary.{o}_{D}.tsv'
     shell: """
-        curl -L https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary.txt > {output.good}
-        curl -L https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary_historical.txt > {output.bad}
+        url_good="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary.txt"
+
+        server_status_good=$(curl -L -o /dev/null -w "%{{http_code}}" -s "$url_good")
+
+        if [ "$server_status_good" -eq 200 ]; then
+            curl -L "$url_good" > {output.good}
+        else
+            echo "Failed to download files"
+            echo "Server status code $server_status_good"
+        fi
+    """
+
+rule download_historical_summary:
+    output:
+        bad = '{o}/data/assembly_summary_historical.{D}.txt',
+    shell: """
+        url_bad="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary_historical.txt"
+
+        server_status_bad=$(curl -L -o /dev/null -w "%{{http_code}}" -s "$url_bad")
+
+        if [ "$server_status_bad" -eq 200 ]; then
+            curl -L "$url_bad" > {output.bad}
+        else
+            echo "Failed to download files"
+            echo "Server status code $server_status_bad"
+        fi
+    """
+
+# create a 1% sub_assembly file for testing!!!
+rule test_with_sub_assembly_summary:
+    input:
+        good = '{o}/data/assembly_summary.{D}.txt',
+        bad = '{o}/data/assembly_summary_historical.{D}.txt',
+    output:
+        good = '{o}/data/sub_assembly_summary.{D}.txt',
+        bad = '{o}/data/sub_assembly_summary_historical.{D}.txt',
+    shell:"""
+        echo {input.good}
+        cat {input.good} | wc -l
+        awk 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.good} > {output.good}
+        cat {output.good} | wc -l
+
+        echo {input.bad}
+        cat {input.bad} | wc -l
+        awk 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.bad} > {output.bad}
+        cat {output.bad} | wc -l
     """
 
 rule get_ss_db:
@@ -122,19 +175,18 @@ rule collect_all:
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
-        sourmash sig collect {input.dbs} -k {params.first_k} -F csv -o {output.db}
+        sourmash sig manifest --no-rebuild {input.dbs} -o {output.db}
     """
 
 rule cleanse_manifest:
     input:
+        unpack(getInputFilesForManifest),
         script = "scripts/update_sourmash_dbs.py",
-        good = "{o}/data/assembly_summary.{D}.txt",
-        bad = "{o}/data/assembly_summary_historical.{D}.txt",
         manifest = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
     output:
         clean = "{o}/data/mf-clean.{d}-{D}.csv",
         reversion = "{o}/data/updated-versions.{d}-{D}.csv",
-        report = "{o}/data/report.{d}-{D}.txt",
+        report = "{o}/data/update-report.{d}-{D}.txt",
         missing = "{o}/data/missing-genomes.{d}-{D}.csv",
     conda: "envs/sourmash.yaml",
     resources:
@@ -158,10 +210,10 @@ rule picklist_clean_db:
         old_date = OLD_DATES
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+        time = lambda wildcards, attempt: 12 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        allowed_jobs=10,
+        partition="bmh",
     benchmark:
         'benchmarks/picklist_clean_db.{o}-{d}-{D}-k{k}.tsv'
     shell:'''
@@ -193,7 +245,7 @@ rule gather_sketch_reversioned:
         "logs/gather_sketch_reversioned.{o}_{d}_{D}.log"
     shell:'''
         sourmash scripts gbsketch {input.reversion} -o {output.db} --failed {output.failed} \
-            --param-str "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {log}
+            --param-string "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {log}
     '''
 
 rule cat_to_clean_reversioned:
@@ -225,8 +277,8 @@ rule gather_sketch_missing:
     conda: "envs/directsketch.yaml"
     resources:
         mem_mb = 100 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 168 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 168 * 60 * attempt,
         allowed_jobs=100,
         partition="bmh",
     threads: 3
@@ -239,9 +291,11 @@ rule gather_sketch_missing:
             --param-str "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {params.log}
     '''
 
+# Could this be changed to `sourmash sig check` instead?
 checkpoint cat_to_clean_missing:
     input:
-        dir = "{o}/genbank-{d}-{D}.miss.zip",
+        rever = "{o}/genbank-{d}-{D}.rever.zip",
+        miss = "{o}/genbank-{d}-{D}.miss.zip",
         db = "{o}/genbank-{d}-{D}-k{k}.clean.zip",
     output:
         woohoo = protected("{o}/genbank-{d}-{D}-k{k}.zip"),
@@ -253,8 +307,51 @@ checkpoint cat_to_clean_missing:
         allowed_jobs=100,
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
-        sourmash sig cat {input.dir} {input.db} -k {wildcards.k} -o {output.woohoo}
+        sourmash sig cat {input.miss} {input.rever} {input.db} -k {wildcards.k} -o {output.woohoo}
     """
+
+rule collect_complete:
+    input:
+        dbs = lambda wildcards: expand("{o}/genbank-{d}-{D}-k{k}.zip", o = [wildcards.o], d = [wildcards.d], D = [wildcards.D], k = KSIZES[0])
+    output:
+        db = "{o}/data/collect-mf.{d}-{D}.csv",
+    params:
+        first_k = lambda wildcards: KSIZES[0],
+    conda: "envs/sourmash.yaml",
+    resources:
+        mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    shell: """
+        sourmash sig manifest --no-rebuild {input.dbs} -o {output.db}
+    """
+
+rule picklist_check:
+    input:
+        dbs_manifest = "{o}/data/collect-mf.{d}-{D}.csv",
+        tax_picklist = '{o}/lineages.{D}.csv',
+    output:
+        missing = "{o}/data/genbank-{d}-{D}.missing.csv",
+        manifest = "{o}/data/genbank-{d}-{D}.existing.csv",
+    params:
+        log = "logs/genbank-{d}-{D}.picklist_check.log",
+        first_k = lambda wildcards: KSIZES[0],
+    conda: "envs/sourmash.yaml"
+    threads: 1
+    resources:
+        mem_mb= lambda wildcards, attempt: 6 * 1024 * attempt,
+        time= 10000,
+        partition='high2',
+    shell:
+        """
+        sourmash sig check -k {params.first_k} \
+            --picklist {input.tax_picklist}:ident:ident \
+            {input.dbs_manifest} --output-missing {output.missing} \
+            --save-manifest {output.manifest} 2> {params.log}
+        touch {output.missing}
+        """
 
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
 
@@ -291,3 +388,61 @@ rule make_lineage_csv:
         'benchmarks/make_lineage_csv.{o}-{D}.tsv'
     shell:
         "python scripts/make-lineage-csv.py taxdump/{{nodes.dmp,names.dmp}} {input[0]} -o {output} {params.ictv_cmd}"
+
+### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
+
+rule quarto_report:
+    input:
+        unpack(getInputFilesForManifest),
+        report = "{o}/data/update-report.{d}-{D}.txt",
+        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
+        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
+        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
+        missing = "{o}/data/genbank-{d}-{D}.missing.csv",
+        gathered = "{o}/data/genbank-{d}-{D}.existing.csv",
+        lineage = "{o}/lineages.{D}.csv"
+    output:
+        "{o}/report/report.{d}-{D}.html"
+    params:
+        log = "../logs/{d}_{D}_report.log",
+        report_title = "Genbank's {D} Database Update Report",
+        old_date = OLD_DATES,
+        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
+        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
+    conda: "envs/quarto.yaml",
+    resources:
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    shell:
+        """
+        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
+        # This will be a stand-alone html document and needs to embed-resources
+        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
+        mkdir -p {wildcards.d}-{wildcards.D}.temp
+        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
+        cd {wildcards.d}-{wildcards.D}.temp/
+
+        DIRNAME=$(dirname "{output}")
+
+        quarto render report.qmd \
+            -P details_files:{input.report} -P old_details:{params.old_date} \
+            -P new_details:{wildcards.d} -P old_db:{params.old_db} \
+            -P new_db:{params.new_db} -P old_mf:{input.old_mf} \
+            -P new_mf:{input.new_mf} -P failures:{input.failures} \
+            -P report_title:"{params.report_title}" -P config:"{config}" \
+            -P good_assm:{input.good} -P bad_assm:{input.bad} \
+            -P missed:{input.missing} -P gathered:{input.gathered} \
+            -P lineage:{input.lineage}
+        # 2> {params.log}
+
+        # the `--output` arg adds an unnecessary `../` to the output file path
+        # https://github.com/quarto-dev/quarto-cli/issues/10129
+        # just mving it back in place
+
+        mv report.html {output}
+        cd ..
+        rm -rf {wildcards.d}-{wildcards.D}.temp
+        """

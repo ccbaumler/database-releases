@@ -19,6 +19,12 @@ params:
   old_mf: default_old_mf
   new_mf: default_new_mf
   failures: default_failures
+  config: default_config_dict
+  good_assm: default_assembly
+  bad_assm: default_historical
+  missed: default_missing_sigs
+  gathered: default_gathered_sigs
+  lineage: default_lineage
 ---
 
 ```{r}
@@ -30,7 +36,9 @@ library(reticulate)
 use_condaenv( condaenv = Sys.getenv("CONDA_PREFIX"), required = TRUE)
 ```
 
-## Database updated from `r params$old_details` to `r params$new_details`
+## Databases updated from `r params$old_details` to `r params$new_details`
+
+The list of database files:
 
 ```{r}
 new_db_lst <- str_split(params$new_db, ",")
@@ -45,9 +53,18 @@ for (i in seq_along(new_db_lst[[1]])) {
 }
 ```
 
-## Sourmash summary of first K-value in databases
+## Summary of databases
 
-The manifest for `r old_db_lst[[1]][1]`:
+```{python}
+config_dict = r.params.get('config')
+k_list = config_dict.get('k_values')
+```
+
+Looking only at the first k-value defined in `r reticulate::py_eval("k_list")`.
+
+### Summary example for the old databases
+
+**The manifest for `r old_db_lst[[1]][1]`:**
 
 ```{python}
 import argparse
@@ -57,10 +74,6 @@ import sourmash
 #sig_files = r.params.get('new_db').split(',')
 #sigs = [sourmash.load_one_signature(sig, ksize=31) for sig in sig_files]
 #summary = sourmash.summarize(sigs)
-
-def escape_ansi(line):
-    ansi_escape = re.compile(r"(?:\x1B[@-_]|[\x80-\x9F])[0-?]*[ -/]*[@-~]")
-    return ansi_escape.sub("", line)
 
 args = argparse.Namespace()
 args.quiet = False
@@ -73,7 +86,9 @@ args.path = r.params.get('old_mf')
 sourmash.sig.fileinfo(args=args)
 ```
 
-The manifest for `r new_db_lst[[1]][1]`:
+### Summary example for the new databases
+
+**The manifest for `r new_db_lst[[1]][1]`:**
 
 ```{python}
 args.path = r.params.get('new_mf')
@@ -82,16 +97,57 @@ sourmash.sig.fileinfo(args=args)
 
 ```
 
+### Replicate these results:
+
+```{bash}
+#| echo: true
+#| eval: false
+
+sourmash sig summarize database.zip
+```
+
 ## Genome report for the updated database 
+
+Databases were updated with the `update_sourmash_databases.py` script in the `scripts` directory. This compared the existing database against the `r basename(params$good_assm)` and `r basename(params$bad_assm) files.
+
+**The summary report is below.**
 
 ```{r}
 writeLines(readLines(params$details_files, n=5))
-
-sent <- paste("For more details, read ", params$details_files, "\n in the `data` directory")
-cat(sent)
 ```
 
+::: {.callout-note collapse="true"}
+## Expand for details
+```{r}
+writeLines(readLines(params$details_files))
+```
+:::
+
+---
+
+```{r}
+missed = readLines(params$missed)
+good_assm = readLines(params$good_assm)
+lineage = readLines(params$lineage)
+```
+
+When checking the final database, there are `r length(missed)` missed signatures of the expected `r length(good_assm)`.
+
+::: {.callout-note collapse="true"}
+## Expand for details
+```{r}
+writeLines(missed)
+```
+:::
+
 ## Genomes failed to download or sketch
+
+```{r}
+fail_lines <- readLines(params$failures)
+fail_count <- length(fail_lines) - 1 
+```
+
+The sourmash plugin [DirectSketch](https://github.com/sourmash-bio/sourmash_plugin_directsketch){target="_blank"} was used to download and sketch the missing or updated genomes. This plugin failed to download `{r} fail_count` sequences.
 
 ::: {.callout-note collapse="true"}
 ## Expand for details
@@ -99,3 +155,16 @@ cat(sent)
 writeLines(readLines(params$failures))
 ```
 :::
+
+## `r basename(params$lineage)` lineage file created
+
+The lineage of `r length(lineage)` were created from the `r basename(params$good_assm)` file.
+
+::: {.callout-note collapse="true"}
+## Expand for details
+```{r}
+writeLines(lineage)
+```
+:::
+
+

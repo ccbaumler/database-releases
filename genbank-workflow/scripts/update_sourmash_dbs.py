@@ -10,6 +10,28 @@ from collections import defaultdict
 from sourmash import manifest
 
 
+class GeneralManifestHandler:
+    def __init__(self, filename):
+        self.filename = filename
+        self.rows = []
+
+    def read_csv(self):
+        with open(self.filename, 'r') as csvfile:
+            csvreader = csv.DictReader(csvfile)
+            for row in csvreader:
+                self.rows.append(row)
+                if row['ident']:
+                    row['name'] = row.pop('ident')
+
+    def find_ident_header(self):
+        with open(self.filename, 'r') as fp:
+            for line in fp:
+                if 'ident' in line:
+                    print(f'Ident found in header: {line.strip()}')
+                    return line.strip()
+        print('Ident not found in header.')
+        return None
+
 def extract_urls(row):
     url_pattern = r'https?://\S+'
     for value in row:
@@ -93,11 +115,11 @@ def filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict
 
         if mf_ident in good_idents:
             keep_rows.append(row)
-        else:
+        else: #mf_ident not in good_idents
             if mf_ident_no_version in good_idents_no_version:
                 updated_version_list.append(name)
                 updated_version_no_ident_list.add(mf_ident_no_version)
-            else:
+            else: #mf_idents with and without version not in good_idents
                 removed_list.append(name)
 
         if mf_ident in bad_idents:
@@ -167,8 +189,7 @@ def main():
 
     print(f"\nLoading historical summary from '{args.b}'")
     bad_idents, bad_idents_dict = load_summary(args.b, summary_type = 'historic')
-    print(f"\nLoaded {len(bad_idents)} identifiers and {len(bad_idents_dict)} identifiers with multiple versions")
-
+    print(f"\nLoaded {len(bad_idents)} identifiers. {len(bad_idents_dict)} identifiers have multiple versions")
 
     ident = None
     new_mf = None
@@ -179,8 +200,6 @@ def main():
         print(f"Loaded manifest with {len(old_mf.rows)} rows")
 
         keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
-
-        new_mf = manifest.CollectionManifest(keep_rows)
 
     except ValueError as e:
         print(f"\nValueError when processing Sourmash Manifest: {e}")
@@ -193,18 +212,30 @@ def main():
         if ident:
             old_mf.read_csv()
 
-            print(f"Loaded manifest with {len(old_mf.rows)} rows")
-            keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict, ident=True)
+            print(f"\nLoaded manifest with {len(old_mf.rows)} rows")
+            keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
 
         else:
-            print("No Sourmash Manifest or 'ident' column found... \nExiting script")
+            print("\nNo Sourmash Manifest or 'ident' column found... \nExiting script")
             sys.exit(1)
+
+    new_list = []
+    keep_rows_no_version_set = {get_suffix_no_version(row['name']) for row in keep_rows}
+    for g in good_idents_no_version:
+        if g not in keep_rows_no_version_set:
+            if g not in updated_version_no_ident_set:
+                new_list.append(g)
+    print(len(new_list))
 
     good_doc_gen_list = list(row_generator(args.a))
 
     if args.missing_genomes:
         keep_rows_set = {get_suffix(row['name']) for row in keep_rows}
-        gather_ident_list = [row for row in good_doc_gen_list if get_suffix(row[0]) not in keep_rows_set]
+        gather_ident_list = [
+            row for row in good_doc_gen_list
+            if get_suffix(row[0]) not in keep_rows_set
+            if get_suffix_no_version(row[0]) not in updated_version_no_ident_set
+            ]
 
         write_links_output(gather_ident_list, args.missing_genomes)
 
@@ -213,7 +244,7 @@ def main():
         write_links_output(gather_ident_list, args.updated_version)
 
     if args.all_links:
-        kept_set = {get_suffix(row['ident']) if ident else get_suffix(row['name']) for row in keep_rows}
+        kept_set = {get_suffix(row['name']) for row in keep_rows}
 
         gather_ident_list = [
             row for row in good_doc_gen_list
@@ -222,8 +253,11 @@ def main():
 
         write_links_output(gather_ident_list, args.all_links)
 
+    if args.output or args.report:
+        new_mf = manifest.CollectionManifest(keep_rows)
+        with open(args.output, 'w', newline='') as fp:
+            new_mf.write_to_csv(fp, write_header=True)
 
-    new_mf = manifest.CollectionManifest(keep_rows)
 
     n_removed = len(old_mf.rows) - len(keep_rows)
     n_changed_version = len(updated_version_list)
@@ -245,13 +279,11 @@ def main():
     print(f"Kept {len(bad_idents)} of {len(bad_idents)} identifiers.")
 
     print(f"\nNew manifest '{args.output}':")
-    print(f"Kept {len(new_mf.rows)} identifiers.")
+    print(f"Kept {len(keep_rows)} identifiers.")
+    print(f"Included {len(new_list)} new genomes by new identifiers.")
     print(f"Removed {n_removed} total identifiers.")
     print(f"Removed {n_changed_version} identifiers because of version change.")
     print(f"Removed {n_suspect_suspension} identifiers because of suspected suspension of the genome.\n\n")
-
-    with open(args.output, 'w', newline='') as fp:
-        new_mf.write_to_csv(fp, write_header=True)
 
     if args.report:
         with open(args.report, 'wt') as fp:
