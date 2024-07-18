@@ -16,6 +16,8 @@ email: 'ccbaumler@ucdavis.edu'
 
 release:
 
+release_version:
+
 # This is the output path to place 
 # all the final output directories
 # and files
@@ -48,7 +50,7 @@ k_values:
 # The value to scale the sourmash
 # database by. Lab standard is 1000
 # but set to lowest needed and 
-# downsample.
+# downsample
 
 # example =
 #scale_value: 1000

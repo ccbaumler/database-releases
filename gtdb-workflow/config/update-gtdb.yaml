@@ -43,7 +43,7 @@ release_version:
 
 # examples = output_directory: 'elsewhere'
 
-output_directory: 
+output_directory: '/group/ctbrowngrp4/2024-ccbaumler-gtdb-test'
 
 # The sourmash kmer size you
 # would like to sketch as your

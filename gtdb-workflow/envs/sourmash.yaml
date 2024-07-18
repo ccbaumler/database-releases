@@ -1,4 +1,4 @@
-name: genbank-sourmash-database
+name: gtdb-sourmash-database
 channels:
   - conda-forge
   - bioconda

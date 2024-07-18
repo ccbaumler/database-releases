@@ -41,10 +41,15 @@ wildcard_constraints:
 rule all:
     input:
         expand("{o}/gtdb-rs{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
+        expand("{o}/gtdb-reps-rs{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}-k{k}.clean.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}.lineages.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/gtdb-{r}.clean-existing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/gtdb-{r}.clean-missing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/data/final.gtdb-{r}.missing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/data/final.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/data/final-reps.gtdb-{r}.missing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/data/final-reps.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
 
 rule tax:
     input:
@@ -130,7 +135,7 @@ rule make_taxonomy:
         reps_csv = '{o}/gtdb-rs{r}.lineages.reps.csv',
     threads: 1
     resources:
-        mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
@@ -145,7 +150,7 @@ rule make_taxonomy:
 
 rule collect_all:
     input:
-        dbs = expand(f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip", k = KSIZES)
+        dbs = expand(f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip", k = KSIZES[0])
     output:
         db = f"{{o}}/data/collect-mf.{OLD_RELEASES}.csv",
     conda: "envs/sourmash.yaml"
@@ -156,7 +161,7 @@ rule collect_all:
         allowed_jobs=100,
         partition="bmh",
     shell: """
-        sourmash sig collect {input.dbs} -F csv -o {output.db}
+        sourmash sig manifest --no-rebuild {input.dbs} -o {output.db}
     """
 
 rule picklist_check:
@@ -235,8 +240,8 @@ rule gather_sketch_existing:
     conda: "envs/directsketch.yaml"
     resources:
         mem_mb = 100 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
         allowed_jobs=100,
         partition="bmh",
     threads: 3
@@ -258,8 +263,8 @@ rule gather_sketch_missing:
     conda: "envs/directsketch.yaml"
     resources:
         mem_mb = 100 * 1024,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
         allowed_jobs=100,
         partition="bmh",
     threads: 3
@@ -277,7 +282,7 @@ rule extract_db:
         clean = "{o}/data/gtdb-{r}.clean-existing.csv",
         dbs = f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip",
     output:
-        dbs = "{o}/gtdb-rs{r}-k{k}.clean.zip",
+        dbs = temporary("{o}/gtdb-rs{r}-k{k}.clean.zip"),
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = 80 * 1024,
@@ -314,3 +319,125 @@ rule final_db:
             {input.old_existing} {input.updated_existing} {input.updated_missing} \
             -k {wildcards.k} -o {output.woohoo}
     """
+
+rule final_db_reps:
+    input:
+        dbs = "{o}/gtdb-rs{r}-k{k}.zip",
+        picklist = "{o}/data/gtdb-rs{r}.lineages.reps.csv",
+    output:
+        woohoo = "{o}/gtdb-reps-rs{r}-k{k}.zip"
+    conda: "envs/sourmash.yaml",
+    resources:
+        mem_mb = 80 * 1024,
+        time = lambda wildcards, attempt: 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 24 * 60 * attempt,
+        allowed_jobs = 100,
+        partition = "bmh",
+    shell:"""
+        sourmash signature cat \
+            {input.dbs} -k {wildcards.k} \
+            --picklist {input.picklist}:ident:ident \
+            -o {output.woohoo}
+    """
+
+rule final_picklist_check:
+    input:
+        dbs = expand("{o}/gtdb-rs{r}-k{k}.zip", o = OUTDIR, r = RELEASES, k = KSIZES[0]), 
+        tax_picklist = '{o}/gtdb-rs{r}.lineages.csv',
+    output:
+        missing = "{o}/data/final.gtdb-{r}.missing.csv",
+        manifest = "{o}/data/final.gtdb-{r}.existing.csv",
+    params: 
+        log = "logs/picklist_check/final.gtdb-{r}.picklist_check.log",
+        first_k = lambda wildcards: KSIZES[0],
+    conda: "envs/sourmash.yaml"
+    threads: 1
+    resources:
+        mem_mb= lambda wildcards, attempt: 6 * 1024 * attempt,
+        time= 10000,
+        partition='high2',
+    shell:
+        """
+        sourmash sig check -k {params.first_k} \
+            --picklist {input.tax_picklist}:ident:ident \
+            {input.dbs} --output-missing {output.missing} \
+            --save-manifest {output.manifest} 2> {params.log}
+        touch {output.missing}
+        """
+
+rule reps_picklist_check:
+    input:
+        dbs = expand("{o}/gtdb-reps-rs{r}-k{k}.zip", o = OUTDIR, r = RELEASES, k = KSIZES[0]), 
+        tax_picklist = '{o}/gtdb-rs{r}.lineages.reps.csv',
+    output:
+        missing = "{o}/data/final-reps.gtdb-{r}.missing.csv",
+        manifest = "{o}/data/final-reps.gtdb-{r}.existing.csv",
+    params: 
+        log = "logs/picklist_check/final-reps.gtdb-{r}.picklist_check.log",
+        first_k = lambda wildcards: KSIZES[0],
+    conda: "envs/sourmash.yaml"
+    threads: 1
+    resources:
+        mem_mb= lambda wildcards, attempt: 6 * 1024 * attempt,
+        time= 10000,
+        partition='high2',
+    shell:
+        """
+        sourmash sig check -k {params.first_k} \
+            --picklist {input.tax_picklist}:ident:ident \
+            {input.dbs} --output-missing {output.missing} \
+            --save-manifest {output.manifest} 2> {params.log}
+        touch {output.missing}
+        """
+
+### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
+
+#rule quarto_report:
+#    input:
+#        report = "{o}/data/update-report.{d}-{D}.txt",
+#        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
+#        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
+#        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
+#    output:
+#        "{o}/report/report.{r}.html"
+#    params:
+#        log = "../logs/{d}_{D}_report.log",
+#        report_title = "AllTheBacteria's {D} Database Update Report",
+#        old_date = OLD_DATES,
+#        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZ
+#ES]),
+#        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
+#    conda: "envs/quarto.yaml",
+#    resources:
+#        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+#        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+#        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+#        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+#        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+#    shell:
+#        """
+#        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
+#        # This will be a stand-alone html document and needs to embed-resources
+#        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
+#        mkdir -p {wildcards.d}-{wildcards.D}.temp
+#        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
+#        cd {wildcards.d}-{wildcards.D}.temp/
+#
+#        DIRNAME=$(dirname "{output}")
+#
+#        quarto render report.qmd \
+#            -P details_files:../{input.report} -P old_details:{params.old_date} \
+#            -P new_details:{wildcards.d} -P old_db:{params.old_db} \
+#            -P new_db:{params.new_db} -P old_mf:../{input.old_mf} \
+#            -P new_mf:../{input.new_mf} -P failures:../{input.failures} \
+#            -P report_title:{params.report_title} -P config:"{config}"
+#        # 2> {params.log}
+#
+#        # the `--output` arg adds an unnecessary `../` to the output file path
+#        # https://github.com/quarto-dev/quarto-cli/issues/10129
+#        # just mving it back in place
+#
+#        mv report.html ../{output}
+#        cd ..
+#        rm -rf {wildcards.d}-{wildcards.D}.temp
+#        """

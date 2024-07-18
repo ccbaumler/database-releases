@@ -10,7 +10,7 @@ def main(args):
     for metadata_file in args.metadata_files:
         metadata_info = pd.read_csv(metadata_file, header=0, low_memory=False, sep = "\t")
         filtered_metadata_info = metadata_info[["accession", "gtdb_representative", "gtdb_taxonomy"]]
-        filtered_metadata_info["accession"] = metadata_info["accession"].str.replace("RS_", "").str.replace("GB_", "")
+        filtered_metadata_info.loc[:, "accession"] = filtered_metadata_info["accession"].str.replace("RS_", "").str.replace("GB_", "")
         metadata_dfs.append(filtered_metadata_info)
 
     # Write lineages csv file
