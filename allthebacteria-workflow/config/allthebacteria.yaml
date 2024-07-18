@@ -40,7 +40,7 @@ files_of_paths:
 
 # examples = output_directory: 'elsewhere'
 
-output_directory:
+output_directory: '/group/ctbrowngrp4/2024-ccbaumler-allthebacteria'
 
 # The sourmash kmer size you
 # would like to sketch as your

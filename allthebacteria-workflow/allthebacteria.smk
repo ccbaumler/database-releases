@@ -43,8 +43,8 @@ for file in FILES:
         dir_name_list = [os.path.basename(f).split(".")[0] for f in file_list]
 
         if config.get('output_directory') == 'test':
-            selected_line = random.sample(file_list, 5) #random.choice(file_list)
-            dir_name_list = [os.path.basename(selected_line).split(".")[0]]
+            selected_lines = file_list[-2:] #random.sample(file_list, 2) #random.choice(file_list)
+            dir_name_list = [os.path.basename(line).split(".")[0] for line in selected_lines]
 
             directory_path = f"test/allthebacteria-r{release}"
 
@@ -56,7 +56,7 @@ for file in FILES:
             test_filename = f"{directory_path}/sub-{file}"
             
             with open(test_filename, 'w') as fp:
-                fp.write(f"{selected_line}")
+                fp.write(''.join(selected_lines))
 
             print(f"Selected line for test: {dir_name_list} written to {test_filename}")
 
@@ -101,6 +101,9 @@ rule all:
     input:
         expand("{o}/allthebacteria-r{r}-sigs/{dir_name}/{dir_name}.zip", o=OUTDIR, r=RELEASES, dir_name=[dn for r in RELEASES for dn in dir_name_dict[r]]),
         expand("{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
+        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.missing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.existing.csv", o=OUTDIR, r=RELEASES),
 
 rule check_sketch:
     input:
@@ -123,28 +126,11 @@ rule make_links:
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
 	partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    priority: 1
     shell: """
         {input.script} ftp.ebi.ac.uk pub/databases/AllTheBacteria/Releases/{wildcards.r}/metadata -s ftp -p {output.meta}
 
         {input.script} ftp.ebi.ac.uk pub/databases/AllTheBacteria/Releases/{wildcards.r}/assembly -s ftp -p {output.data}
     """
-
-# create a 1 sub_assembly file for testing!!!
-#rule test_with_sub_assembly_summary:
-#    input:
-#        data = "{o}/allthebacteria-r{r}-data-links.txt",
-#    output:
-#        data = "{o}/allthebacteria-r{r}-sub-data-links.txt",
-#    shell:"""
-#        echo {input.data}
-#        cat {input.data} | wc -l
-#
-##        awk 'BEGIN {{srand();}} {{print rand() " " $0}}' "{input.data}" | sort -n | cut -d" " -f 2 | tail --lines=1 > "{output.data}"
-#
-#        cat {output.data} | wc -l
-#        cat {output.data}
-#    """
 
 rule download_links:
     input:
@@ -152,13 +138,13 @@ rule download_links:
         meta = "{o}/allthebacteria-r{r}-metadata-links.txt",
     output:
         tsv = "{o}/allthebacteria-r{r}-metadata/sylph.tsv.gz",
+        txt = "{o}/allthebacteria-r{r}-metadata/sample_list.txt.gz",
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
 	partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    priority: 1
     threads: 
         10
     shell: """
@@ -169,20 +155,26 @@ rule download_links:
 rule extract_info:
     input:  
         info = "{o}/allthebacteria-r{r}-metadata/sylph.tsv.gz",
+        samples = "{o}/allthebacteria-r{r}-metadata/sample_list.txt.gz",
     output:
         info = "{o}/allthebacteria-r{r}-metadata/sylph.tsv",
+        samples = "{o}/allthebacteria-r{r}-metadata/sample_list.txt",
+        idents = "{o}/allthebacteria-r{r}-metadata/ident_list.txt",
     resources:
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    priority: 1
-    shell:
-        """
+    shell:"""
         gzip -kvdf {input.info}
+        gzip -kvdf {input.samples}
+
+        echo -e "ident" | cat - {output.samples} > {output.idents}
     """
 
 rule extract_files:
     input:
+        unpack(getInputFilesForLinks),
         placeholder = "{o}/allthebacteria-r{r}-metadata/sylph.tsv",
+        script = "scripts/extract_check.sh",
     output:
         seq_dir = temporary(directory("{o}/allthebacteria-r{r}-seqs/{dir_name}")),
     conda: "envs/branchwater.yaml"
@@ -196,64 +188,54 @@ rule extract_files:
     params:
         outdir = "{o}/allthebacteria-r{r}-seqs",
         data = "{o}/allthebacteria-r{r}-data/{dir_name}.asm.tar.xz", # needs to be in params because smk is looking for the file in upstream rule output
+        download_dir = "{o}/allthebacteria-r{r}-data",
     shell:
         """
         echo "Extracting sequence files from compressed archives"
-        pv {params.data} | tar --use-compress-program="xz -T0 -q" --skip-old-files -xf - -C {params.outdir}
+
+        # a script to double-check the failed extracts and re-download/extract if they were corrupted
+        {input.script} -f {params.data} -o {params.outdir} -d {wildcards.dir_name} -p {params.download_dir} -i {input.data}
+
+        #pv {params.data} | tar --use-compress-program="xz -T0 -q" --skip-old-files -xf - -C {params.outdir}
         #tar --skip-old-files -xvf {params.data} -C {params.outdir}
         echo "Extracted $(ls -1 {output.seq_dir} | wc -l) files!"
         """
 
-#info_dict = None
-#
-#def load_info_dict(info_files=[]):
-#    global info_dict
-#    if info_dict is None:
-#        info_dict = {}
-#        for info_file in info_files:
-#            with open(info_file, 'r') as fp:
-#                reader = csv.DictReader(fp, delimiter='\t')
-#                for row in reader:
-#                    info_dict[row['sample']] = row['Contig_name'] + " " + row['sample']
-#
-#load_info_dict([f"allthebacteria-r{release}-metadata/sylph.tsv" for release in RELEASES],)
-
 rule build_csv:
     input:
         seq_dir = "{o}/allthebacteria-r{r}-seqs/{dir_name}",
-        info_file = "{o}/allthebacteria-r{r}-metadata/sylph.tsv"
+        info_file = "{o}/allthebacteria-r{r}-metadata/sylph.tsv",
     output:
-        csv_file = "{o}/allthebacteria-r{r}-sigs/{dir_name}/manysketch.csv"
+        csv_file = "{o}/allthebacteria-r{r}-sigs/{dir_name}/manysketch.csv",
+        missing_file = touch("{o}/allthebacteria-r{r}-sigs/{dir_name}/missing.csv"),
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    #group: "group"
     params:
         dir_name = "{dir_name}"
-    priority: 1
     run:
-
         def load_info_dict(info_files=[]):
             info_dict = {}
             for info_file in info_files:
                 with open(info_file, 'r') as fp:
                     reader = csv.DictReader(fp, delimiter='\t')
                     for row in reader:
-                        info_dict[row['sample']] = row['Contig_name'] + " " + row['sample']
+                        info_dict[row['sample']] = row['sample'] + " " + row['Contig_name']
             return info_dict
-        #info_dict = {}
 
         info_dict = load_info_dict([f"{wildcards.o}/allthebacteria-r{release}-metadata/sylph.tsv" for release in RELEASES],)
 
-        with open(output.csv_file, 'w', newline='') as csvfile:
+        print(f"Processing {input.seq_dir}")
+
+        with open(output.csv_file, 'w', newline='') as csvfile, open(output.missing_file, 'w') as missing_fp:
              csvwriter = csv.writer(csvfile)
              csvwriter.writerow(['name', 'genome_filename', 'protein_filename'])
 
              filepaths = [os.path.join(input.seq_dir, f) for f in os.listdir(input.seq_dir) if os.path.isfile(os.path.join(input.seq_dir, f))]
-             num_files = len(filepaths)
+             num_files = len(filepaths) - 1
 
              increment = int(num_files * 0.05)
              target_line = increment
@@ -269,12 +251,23 @@ rule build_csv:
                      name = name.replace(',', '')
 
                      csvwriter.writerow([name, filepath,''])
+
                      line_count += 1
 
                      if line_count >= target_line:
                          print(f"Progress: {line_count}/{num_files} lines written")
                          target_line += increment
+                 else:
+                     if not filename.startswith('.'):
+                         missing_fp.write(f"{filename, filepath}\n")
 
+                         csvwriter.writerow([filename, filepath,''])
+
+                     line_count += 1
+
+                     if line_count >= target_line:
+                         print(f"Progress: {line_count}/{num_files} lines written")
+                         target_line += increment
 
 rule sketch_seqs:
     input:
@@ -286,16 +279,47 @@ rule sketch_seqs:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        allowed_jobs=10, #lambda wildcards, attempt: PART_JOBS[attempt][1],
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    threads: 16
+    threads: 32
     conda: 'envs/branchwater.yaml'
-    priority: 1
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         scale = {SCALE},
     shell:"""
         sourmash scripts manysketch {input.csv_file} -p {params.k_list},scaled={params.scale},abund -o {output.zip_file}
+
+        # To prevent 'sourmash.exceptions.Panic: sourmash panicked: thread 'unnamed' panicked with 'called `Result::unwrap()` on an `Err` value: InvalidArchive("Couldn't find End Of Central Directory Record")' at src/core/src/storage.rs:367'
+        UNZIP_OUTPUT=$(unzip -v {output.zip_file})
+        UNZIP_EXIT_CODE=$?
+
+        if [ $UNZIP_EXIT_CODE -ne 0 ]; then
+            echo "Error found in sketch file. Checking the specific error..."
+
+            if grep -q "End-of-central-directory" "$UNZIP_OUTPUT"; then
+                echo "Detected 'End-of-central-directory' error. Removing corrupted sketch and re-sketching..."
+
+                rm {output.zip_file}
+                sourmash scripts manysketch {input.csv_file} -p {params.k_list},scaled={params.scale},abund -o {output.zip_file}
+
+                UNZIP_OUTPUT=$(unzip -v {output.zip_file})
+                UNZIP_EXIT_CODE=$?
+
+                if [ $UNZIP_EXIT_CODE -ne 0 ]; then
+                    echo "Sketching {output.zip_file} failed again."
+                    echo "Please check extracted sequences in {input.seq_dir}"
+                    echo "Or re-extract {wildcards.o}/allthebacteria-r{wildcards.r}-data/{wildcards.dir_name}.asm.tar.xz"
+                    exit 1
+                else
+                    echo "Sketching completed successfully after second attempt."
+                fi
+            else
+                echo "Sketching failed due to different error. Exiting."
+                exit 1
+            fi
+        else
+            echo "Sketching completed correctly."
+        fi
     """
 
 rule cat_all:
@@ -305,31 +329,124 @@ rule cat_all:
         all = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
     resources:
         mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
         allowed_jobs = 100,
         partition = "bmh",
     conda: 'envs/sourmash.yaml',
     params:
         path = "{o}/allthebacteria-r{r}-sigs"
     shell:"""
-        find {params.path} \
-        -maxdepth 2 -type f -name "*.zip" -exec sh -c \
-        'sourmash sig cat "$@" -o "$0" ' "{output.all}" {{}} +
+        echo -e "\nFinding all sourmash signatures..."
+
+        temp_file={params.path}/sig_list.txt
+        find {params.path} -type f -name "*.zip" > $temp_file
+
+        echo -e "\nFound $(wc -l $temp_file) signature files"
+        echo -e "Combining all signature files now..."
+
+        sourmash sig cat $(cat $temp_file) -o {output.all}
     """
 
 rule cat_by_k:
     input:
         zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
     output:
-        k_zip_file = "{o}/allthebacteria-r{r}-k{k}.zip",
+        k_zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}-k{k}.zip",
     resources:
         mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
-        time = lambda wildcards, attempt: 12 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 12 * 60 * attempt,
+        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 5 *24 * 60 * attempt,
         allowed_jobs = 100,
         partition = "bmh",
     conda: 'envs/sourmash.yaml',
     shell:"""
         sourmash sig cat {input.zip_file} -k {wildcards.k} -o {output.k_zip_file}
     """
+
+rule manifest_manifest:
+    input:
+        db_zip = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
+    output:
+        manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv",
+    conda: 'envs/sourmash.yaml',
+    shell:"""
+        sourmash sig manifest --no-rebuild {input.db_zip} -o {output.manifest} 
+    """
+
+rule picklist_check:
+    input:
+        dbs_manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv",
+        sample_picklist = '{o}/allthebacteria-r{r}-metadata/ident_list.txt',
+    output:
+        missing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.missing.csv",
+        manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.existing.csv",
+    params:
+        log = "logs/allthebacteria-r{r}.picklist_check.log",
+        first_k = KSIZES[0]
+    conda: "envs/sourmash.yaml"
+    threads: 1
+    resources:
+        mem_mb= lambda wildcards, attempt: 6 * 1024 * attempt,
+        time= 10000,
+        partition='high2',
+    shell:
+        """
+        sourmash sig check -k {params.first_k} \
+            --picklist {input.sample_picklist}:ident:ident \
+            {input.dbs_manifest} --output-missing {output.missing} \
+            --save-manifest {output.manifest} 2> {params.log}
+        touch {output.missing}
+        """
+
+### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
+
+#rule quarto_report:
+#    input:
+#        report = "{o}/data/update-report.{d}-{D}.txt",
+#        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
+#        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
+#        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
+#    output:
+#        "{o}/report/report.{r}.html"
+#    params:
+#        log = "../logs/{d}_{D}_report.log",
+#        report_title = "AllTheBacteria's {D} Database Update Report",
+#        old_date = OLD_DATES,
+#        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZ
+#ES]),
+#        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
+#    conda: "envs/quarto.yaml",
+#    resources:
+#        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+#        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+#        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+#        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+#        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+#    shell:
+#        """
+#        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
+#        # This will be a stand-alone html document and needs to embed-resources
+#        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
+#        mkdir -p {wildcards.d}-{wildcards.D}.temp
+#        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
+#        cd {wildcards.d}-{wildcards.D}.temp/
+#
+#        DIRNAME=$(dirname "{output}")
+#
+#        quarto render report.qmd \
+#            -P details_files:../{input.report} -P old_details:{params.old_date} \
+#            -P new_details:{wildcards.d} -P old_db:{params.old_db} \
+#            -P new_db:{params.new_db} -P old_mf:../{input.old_mf} \
+#            -P new_mf:../{input.new_mf} -P failures:../{input.failures} \
+#            -P report_title:{params.report_title} -P config:"{config}"
+#        # 2> {params.log}
+#
+#        # the `--output` arg adds an unnecessary `../` to the output file path
+#        # https://github.com/quarto-dev/quarto-cli/issues/10129
+#        # just mving it back in place
+#
+#        mv report.html ../{output}
+#        cd ..
+#        rm -rf {wildcards.d}-{wildcards.D}.temp
+#        """
