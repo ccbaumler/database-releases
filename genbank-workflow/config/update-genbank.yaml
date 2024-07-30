@@ -49,8 +49,8 @@ domains:
   - 'viral'
   - 'protozoa'
   - 'archaea'
-  - 'bacteria'
   - 'fungi'
+  - 'bacteria'
 
 # The sourmash kmer size you
 # would like to sketch as your

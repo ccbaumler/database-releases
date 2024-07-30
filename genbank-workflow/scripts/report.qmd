@@ -25,15 +25,24 @@ params:
   missed: default_missing_sigs
   gathered: default_gathered_sigs
   lineage: default_lineage
+  recovered: default_recovered_genomes
+  manual_download: default_man_download
+  manual_check: default_man_check
+  manual_output: default_man_output
+  manual_failed: default_man_fail
+  manual_log: default_man_log
+  output_dir: output/dir/path
+  k_list: default_k_list
+  scale: default_scale
 ---
 
-```{r}
+```{r setup}
 library(stringr)
-```
 
-```{r}
 library(reticulate)
 use_condaenv( condaenv = Sys.getenv("CONDA_PREFIX"), required = TRUE)
+
+options(scipen = 999) # prevent sci notation
 ```
 
 ## Databases updated from `r params$old_details` to `r params$new_details`
@@ -48,7 +57,7 @@ for (i in seq_along(new_db_lst[[1]])) {
     new_name <- new_db_lst[[1]][i]
     old_name <- old_db_lst[[1]][i]
 
-    lst <- paste("  Updated", old_name, "to create", basename(new_name))
+    lst <- paste("  - Updated", old_name, "to create", basename(new_name))
     cat(lst, "\n\n")
 }
 ```
@@ -57,10 +66,11 @@ for (i in seq_along(new_db_lst[[1]])) {
 
 ```{python}
 config_dict = r.params.get('config')
-k_list = config_dict.get('k_values')
+
+k_val_list = config_dict.get('k_values')
 ```
 
-Looking only at the first k-value defined in `r reticulate::py_eval("k_list")`.
+Looking only at the first k-value defined in `r reticulate::py_eval("k_val_list")`.
 
 ### Summary example for the old databases
 
@@ -108,7 +118,9 @@ sourmash sig summarize database.zip
 
 ## Genome report for the updated database 
 
-Databases were updated with the `update_sourmash_databases.py` script in the `scripts` directory. This compared the existing database against the `r basename(params$good_assm)` and `r basename(params$bad_assm) files.
+Databases were updated with the `update_sourmash_databases.py` script in the `scripts` directory.
+
+This compared the existing database against the `r basename(params$good_assm)` and `r basename(params$bad_assm)` files.
 
 **The summary report is below.**
 
@@ -131,7 +143,7 @@ good_assm = readLines(params$good_assm)
 lineage = readLines(params$lineage)
 ```
 
-When checking the final database, there are `r length(missed)` missed signatures of the expected `r length(good_assm)`.
+When checking the final database, there are `r length(missed) - 1` missed signatures of the expected `r length(good_assm) - 2`.
 
 ::: {.callout-note collapse="true"}
 ## Expand for details
@@ -156,9 +168,70 @@ writeLines(readLines(params$failures))
 ```
 :::
 
+---
+
+Within the `workflow-cleanup` directory, there are files for manually downloading any missing genomes and manually checking the remaining genomes.
+
+::: {.callout-note collapse="true"}
+## Expand for commands
+Consider running:
+```markdown
+```{r}
+#| echo: false
+#| eval: true
+#| results: 'asis'
+
+# Using glue to create code strings
+cd_str <- glue::glue("cd {params$output_dir}")
+sketch_str <- glue::glue('sourmash scripts gbsketch workflow-cleanup/{basename(params$manual_download)} -o workflow-cleanup{basename(params$manual_output)} --failed workflow-cleanup/{basename(params$manual_failed)} --param-str "dna,{params$k_list},scaled={params$scale},abund" -r 5 -g 2> workflow-cleanup/{basename(params$manual_log)}')
+mv_str <- glue::glue("mv {basename(new_db_lst[[1]][1])} {basename(new_db_lst[[1]][2])} {basename(new_db_lst[[1]][3])} workflow-cleanup/ && cd workflow-cleanup/")
+cat1_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][1])} -k {reticulate::py$config_dict$k_values[1]} -o ../{old_db_lst[[1]][1]}")
+cat2_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][2])} -k {reticulate::py$config_dict$k_values[2]} -o ../{old_db_lst[[1]][2]}")
+cat3_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][3])} -k {reticulate::py$config_dict$k_values[3]} -o ../{old_db_lst[[1]][3]}")
+
+# And print the strings into a markdown code block
+cat(cd_str)
+cat("\n")
+cat("\n")
+cat(sketch_str)
+cat("\n")
+cat("\n")
+cat(mv_str)
+cat("\n")
+cat("\n")
+cat(cat1_str)
+cat("\n")
+cat(cat2_str)
+cat("\n")
+cat(cat3_str)
+cat("\n")
+```
+```
+:::
+
+Details below:
+
+```{r}
+writeLines(readLines(params$recovered))
+```
+
+::: {.callout-note collapse="true"}
+## Expand for `r basename(params$manual_download)` details:
+```{r}
+writeLines(readLines(params$manual_download))
+```
+:::
+
+::: {.callout-note collapse="true"}
+## Expand for `r basename(params$manual_check)` details:
+```{r}
+writeLines(readLines(params$manual_check))
+```
+:::
+
 ## `r basename(params$lineage)` lineage file created
 
-The lineage of `r length(lineage)` were created from the `r basename(params$good_assm)` file.
+The lineage of `r length(lineage) - 1` were created from the `r basename(params$good_assm)` file.
 
 ::: {.callout-note collapse="true"}
 ## Expand for details
@@ -166,5 +239,4 @@ The lineage of `r length(lineage)` were created from the `r basename(params$good
 writeLines(lineage)
 ```
 :::
-
 

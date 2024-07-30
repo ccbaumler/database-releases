@@ -241,11 +241,12 @@ rule gather_sketch_reversioned:
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
+        scale = config.get('scale_value'),
     log:
         "logs/gather_sketch_reversioned.{o}_{d}_{D}.log"
     shell:'''
         sourmash scripts gbsketch {input.reversion} -o {output.db} --failed {output.failed} \
-            --param-string "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {log}
+            --param-string "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {log}
     '''
 
 rule cat_to_clean_reversioned:
@@ -277,18 +278,19 @@ rule gather_sketch_missing:
     conda: "envs/directsketch.yaml"
     resources:
         mem_mb = 100 * 1024,
-        time = lambda wildcards, attempt: 168 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 168 * 60 * attempt,
+        time = lambda wildcards, attempt: 10 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 10 * 24 * 60 * attempt,
         allowed_jobs=100,
         partition="bmh",
     threads: 3
     params:
         k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
         #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
+        scale = config.get('scale_value'),
         log = "logs/gather_sketch_missing.{d}_{D}.log"
     shell:'''
         sourmash scripts gbsketch {input.missing} -o {output.db} --failed {output.failed} \
-            --param-str "dna,{params.k_list},scaled=1000,abund" -r 5 -g 2> {params.log}
+            --param-str "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {params.log}
     '''
 
 # Could this be changed to `sourmash sig check` instead?
@@ -301,11 +303,11 @@ checkpoint cat_to_clean_missing:
         woohoo = protected("{o}/genbank-{d}-{D}-k{k}.zip"),
     conda: "envs/sourmash.yaml"
     resources:
-        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        mem_mb = lambda wildcards, attempt: 24 * 1024 * attempt,
+        time = lambda wildcards, attempt: 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 24 * 60 * attempt,
         allowed_jobs=100,
-        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+        partition="bmm",
     shell: """
         sourmash sig cat {input.miss} {input.rever} {input.db} -k {wildcards.k} -o {output.woohoo}
     """
@@ -352,6 +354,20 @@ rule picklist_check:
             --save-manifest {output.manifest} 2> {params.log}
         touch {output.missing}
         """
+
+rule make_manual_files:
+    input:
+        script = "scripts/gather_failed.sh",
+        missing = "{o}/data/missing-genomes.{d}-{D}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
+        check = "{o}/data/genbank-{d}-{D}.missing.csv",
+    output:
+        output = "{o}/workflow-cleanup/manual-download.{d}-{D}.csv",
+        manual = "{o}/workflow-cleanup/manual-check.{d}-{D}.csv",
+        log = "{o}/workflow-cleanup/log.{d}-{D}.txt",
+    shell:"""
+        {input.script} {wildcards.o} {wildcards.d} {wildcards.D} 2>&1 | tee {output.log}
+    """
 
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
 
@@ -400,15 +416,23 @@ rule quarto_report:
         failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
         missing = "{o}/data/genbank-{d}-{D}.missing.csv",
         gathered = "{o}/data/genbank-{d}-{D}.existing.csv",
-        lineage = "{o}/lineages.{D}.csv"
+        lineage = "{o}/lineages.{D}.csv",
+        recovered = "{o}/workflow-cleanup/log.{d}-{D}.txt",
     output:
-        "{o}/report/report.{d}-{D}.html"
+        "{o}/report/report.{d}-{D}.html",
     params:
-        log = "../logs/{d}_{D}_report.log",
+        log = "logs/{d}_{D}_report.log",
         report_title = "Genbank's {D} Database Update Report",
         old_date = OLD_DATES,
         old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
         new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
+        man = "{o}/workflow-cleanup/manual-download.{d}-{D}.csv",
+        man_check = "{o}/workflow-cleanup/manual-check.{d}-{D}.csv",
+        man_out = "{o}/workflow-cleanup/manual-download.{d}-{D}.zip",
+        man_fail = "{o}/workflow-cleanup/manual-download.{d}-{D}.failed.csv",
+        man_log = "{o}/workflow-cleanup/manual-download.{d}-{D}.log",
+        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
+        scale = config.get('scale_value'),
     conda: "envs/quarto.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
@@ -435,7 +459,11 @@ rule quarto_report:
             -P report_title:"{params.report_title}" -P config:"{config}" \
             -P good_assm:{input.good} -P bad_assm:{input.bad} \
             -P missed:{input.missing} -P gathered:{input.gathered} \
-            -P lineage:{input.lineage}
+            -P lineage:{input.lineage} -P recovered:{input.recovered} \
+            -P manual_download:{params.man} -P manual_output:{params.man_out} \
+            -P manual_failed:{params.man_fail} -P manual_log:{params.man_log} \
+            -P manual_check:{params.man_check} -P output_dir:{wildcards.o} \
+            -P k_list:{params.k_list} -P scale:{params.scale}
         # 2> {params.log}
 
         # the `--output` arg adds an unnecessary `../` to the output file path
