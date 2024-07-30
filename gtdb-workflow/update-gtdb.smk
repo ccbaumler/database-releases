@@ -50,6 +50,7 @@ rule all:
         expand("{o}/data/final.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/final-reps.gtdb-{r}.missing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/final-reps.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/report/report.{r}.html", o=OUTDIR, r=RELEASES),
 
 rule tax:
     input:
@@ -390,54 +391,113 @@ rule reps_picklist_check:
         touch {output.missing}
         """
 
+rule make_manual_files:
+    input:
+        script = "scripts/gather_failed.sh",
+        MISSING="{o}/data/gtdb-{r}.all-missing-links.csv",
+        REVERSION="{o}/data/gtdb-{r}.updated-versions-existing.csv",
+        CHECK="{o}/data/final.gtdb-{r}.missing.csv",
+        CHECK_REPS="{o}/data/final-reps.gtdb-{r}.missing.csv",
+    output:
+        OUTPUT="{o}/workflow-cleanup/manual-download.{r}.csv",
+        OUTPUT_REPS="{o}/workflow-cleanup/manual-download-reps.{r}.csv",
+        MANUAL="{o}/workflow-cleanup/manual-check.{r}.csv",
+        MANUAL_REPS="{o}/workflow-cleanup/manual-check-reps.{r}.csv",
+        log = "{o}/workflow-cleanup/log.{r}.txt",
+    resources:
+        mem_mb = lambda wildcards, attempt: 4 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    shell:"""
+        {input.script} {wildcards.o} {wildcards.r} 2>&1 | tee {output.log}
+    """
+
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
 
-#rule quarto_report:
-#    input:
-#        report = "{o}/data/update-report.{d}-{D}.txt",
-#        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
-#        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
-#        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
-#    output:
-#        "{o}/report/report.{r}.html"
-#    params:
-#        log = "../logs/{d}_{D}_report.log",
-#        report_title = "AllTheBacteria's {D} Database Update Report",
-#        old_date = OLD_DATES,
-#        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZ
-#ES]),
-#        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
-#    conda: "envs/quarto.yaml",
-#    resources:
-#        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
-#        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-#        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-#        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-#        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-#    shell:
-#        """
-#        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
-#        # This will be a stand-alone html document and needs to embed-resources
-#        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
-#        mkdir -p {wildcards.d}-{wildcards.D}.temp
-#        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
-#        cd {wildcards.d}-{wildcards.D}.temp/
-#
-#        DIRNAME=$(dirname "{output}")
-#
-#        quarto render report.qmd \
-#            -P details_files:../{input.report} -P old_details:{params.old_date} \
-#            -P new_details:{wildcards.d} -P old_db:{params.old_db} \
-#            -P new_db:{params.new_db} -P old_mf:../{input.old_mf} \
-#            -P new_mf:../{input.new_mf} -P failures:../{input.failures} \
-#            -P report_title:{params.report_title} -P config:"{config}"
-#        # 2> {params.log}
-#
-#        # the `--output` arg adds an unnecessary `../` to the output file path
-#        # https://github.com/quarto-dev/quarto-cli/issues/10129
-#        # just mving it back in place
-#
-#        mv report.html ../{output}
-#        cd ..
-#        rm -rf {wildcards.d}-{wildcards.D}.temp
-#        """
+rule quarto_report:
+    input:
+        good = "{o}/data/assembly_summary.bac.x.ar.txt",
+        bad = "{o}/data/assembly_summary_historical.bac.x.ar.txt",
+        exist_report = "{o}/data/report-existing.{r}.txt",
+        miss_report = "{o}/data/report-missing.{r}.txt",
+        new_mf = "{o}/data/final.gtdb-{r}.existing.csv",
+        new_reps_mf = "{o}/data/final-reps.gtdb-{r}.existing.csv",
+        old_mf = f"{{o}}/data/collect-mf.{OLD_RELEASES}.csv",
+        missing_failures = "{o}/data/gtdb-{r}.all-missing-links.failures.csv",
+        existing_failures = "{o}/data/gtdb-{r}.updated-versions-existing.failures.csv",
+        missing = "{o}/data/final.gtdb-{r}.missing.csv",
+        gathered = "{o}/data/final.gtdb-{r}.existing.csv",
+        reps_missing = "{o}/data/final-reps.gtdb-{r}.missing.csv",
+        reps_gathered = "{o}/data/final-reps.gtdb-{r}.existing.csv",
+        lineage = '{o}/gtdb-rs{r}.lineages.csv',
+        reps_lineage = '{o}/gtdb-rs{r}.lineages.reps.csv',
+        recovered = "{o}/workflow-cleanup/log.{r}.txt",
+        ar53='{o}/data/ar53_metadata_rs{r}.tsv',
+        bac120='{o}/data/bac120_metadata_rs{r}.tsv',
+    output:
+        "{o}/report/report.{r}.html"
+    params:
+        report_title = "GTDB's {r} Database Update Report",
+        old_release= OLD_RELEASES,
+        old_db = lambda wildcards: ",".join([f'"gtdb-rs{OLD_RELEASES}-k{k}.zip"' for k in KSIZES]),
+        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/gtdb-rs{wildcards.r}-k{k}.zip"' for k in KSIZES]),
+        new_reps_db = lambda wildcards: ",".join([f'"{wildcards.o}/gtdb-reps-rs{wildcards.r}-k{k}.zip"' for k in KSIZES]),
+        man = "{o}/workflow-cleanup/manual-download.{r}.csv",
+        man_check = "{o}/workflow-cleanup/manual-check.{r}.csv",
+        man_out = "{o}/workflow-cleanup/manual-download.{r}.zip",
+        man_fail = "{o}/workflow-cleanup/manual-download.{r}.failed.csv",
+        man_log = "{o}/workflow-cleanup/manual-download.{r}.log",
+        reps = "{o}/workflow-cleanup/manual-download-reps.{r}.csv",
+        reps_check = "{o}/workflow-cleanup/manual-check-reps.{r}.csv",
+        reps_out = "{o}/workflow-cleanup/manual-download-reps.{r}.zip",
+        reps_fail = "{o}/workflow-cleanup/manual-download-reps.{r}.failed.csv",
+        reps_log = "{o}/workflow-cleanup/manual-download-reps.{r}.log",
+        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
+        scale = config.get('scale_value'),
+    conda: "envs/quarto.yaml",
+    resources:
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    shell:
+        """
+        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
+        # This will be a stand-alone html document and needs to embed-resources
+        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
+        mkdir -p {wildcards.r}.temp
+        cp scripts/report.qmd {wildcards.r}.temp/
+        cd {wildcards.r}.temp/
+
+        DIRNAME=$(dirname "{output}")
+
+        quarto render report.qmd \
+            -P existing_report:{input.exist_report} -P missing_report:{input.miss_report} -P old_details:{params.old_release} \
+            -P new_details:{wildcards.r} -P old_db:{params.old_db} \
+            -P new_db:{params.new_db} -P new_reps_db:{params.new_reps_db} \
+            -P old_mf:{input.old_mf} -P new_mf:{input.new_mf} \
+            -P new_reps_mf:{input.new_reps_mf} -P existing_failures:{input.existing_failures} -P missing_failures:{input.missing_failures} \
+            -P report_title:{params.report_title} -P config:"{config}"
+            -P good_assm:{input.good} -P bad_assm:{input.bad} \
+            -P missed:{input.missing} -P gathered:{input.gathered} \
+            -P reps_missed:{input.reps_missing} -P reps_gathered:{input.reps_gathered} \
+            -P lineage:{input.lineage} -P reps_lineage:{input.reps_lineage} -P recovered:{input.recovered} \
+            -P manual_download:{params.man} -P manual_output:{params.man_out} \
+            -P manual_failed:{params.man_fail} -P manual_log:{params.man_log} \
+            -P manual_check:{params.man_check} -P manual_reps_download:{params.reps} \
+            -P manual_reps_output:{params.reps_out} -P manual_reps_failed:{params.reps_fail} \
+            -P manual_reps_check:{params.reps_check} -P manual_reps_log:{params.reps_log} -P output_dir:{wildcards.o} \
+            -P ar:{input.ar53} -P bac:{input.bac120}
+            -P k_list:{params.k_list} -P scale:{params.scale}
+
+        # the `--output` arg adds an unnecessary `../` to the output file path
+        # https://github.com/quarto-dev/quarto-cli/issues/10129
+        # just mving it back in place
+
+        mv report.html ../{output}
+        cd ..
+        rm -rf {wildcards.r}.temp
+        """
