@@ -102,17 +102,22 @@ rule all:
         expand("{o}/allthebacteria-r{r}-sigs/{dir_name}/{dir_name}.zip", o=OUTDIR, r=RELEASES, dir_name=[dn for r in RELEASES for dn in dir_name_dict[r]]),
         expand("{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv", o=OUTDIR, r=RELEASES),
-        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.missing.csv", o=OUTDIR, r=RELEASES),
-        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.existing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-missing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-existing.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/report/report.{r}.html", o=OUTDIR, r=RELEASES),
 
 rule check_sketch:
     input:
-        zip_file = "{o}/allthebacteria-r{r}-sigs/{dir_name}/{dir_name}.zip",
+        zip_file = expand("{o}/allthebacteria-r{r}-sigs/{dir_name}/{dir_name}.zip", o=OUTDIR, r=RELEASES, dir_name=[dn for r in RELEASES for dn in dir_name_dict[r]]),
     log:
         '{o}/logs/check_sketch/allthebacteria-r{r}-sig-{dir_name}.log'
     shell:"""
         unzip -v {input.zip_file} 2>&1 | tee -a {log}
     """
+
+rule report:
+    input:
+        expand("{o}/report/report.allthebacteria-r{r}.html", o=OUTDIR, r=RELEASES),
 
 rule make_links:
     input:
@@ -348,22 +353,6 @@ rule cat_all:
         sourmash sig cat $(cat $temp_file) -o {output.all}
     """
 
-rule cat_by_k:
-    input:
-        zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
-    output:
-        k_zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}-k{k}.zip",
-    resources:
-        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
-        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 5 *24 * 60 * attempt,
-        allowed_jobs = 100,
-        partition = "bmh",
-    conda: 'envs/sourmash.yaml',
-    shell:"""
-        sourmash sig cat {input.zip_file} -k {wildcards.k} -o {output.k_zip_file}
-    """
-
 rule manifest_manifest:
     input:
         db_zip = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
@@ -379,8 +368,8 @@ rule picklist_check:
         dbs_manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv",
         sample_picklist = '{o}/allthebacteria-r{r}-metadata/ident_list.txt',
     output:
-        missing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.missing.csv",
-        manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}.existing.csv",
+        missing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-missing.csv",
+        manifest = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-existing.csv",
     params:
         log = "logs/allthebacteria-r{r}.picklist_check.log",
         first_k = KSIZES[0]
@@ -399,54 +388,92 @@ rule picklist_check:
         touch {output.missing}
         """
 
+rule find_missing:
+    input:
+        script = "scripts/find_missing_files.sh",
+        data_dir = "{o}/allthebacteria-r{r}-data/",
+        missing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-missing.csv",
+        sample_picklist = '{o}/allthebacteria-r{r}-metadata/ident_list.txt',
+    output:
+        missing_files = '{o}/workflow-cleanup/allthebacteria-r{r}-missing-files.csv',
+    resources:
+        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    threads: 32
+    shell:"""
+        {input.script} {input.data_dir} {input.missing} {output.missing_files} {threads}
+    """
+
+rule cat_by_k:
+    input:
+        zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}.zip",
+    output:
+        k_zip_file = "{o}/allthebacteria-r{r}-sigs/allthebacteria-r{r}-k{k}.zip",
+    resources:
+        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
+        time = lambda wildcards, attempt: 5 * 24 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 5 *24 * 60 * attempt,
+        allowed_jobs = 100,
+        partition = "bmh",
+    conda: 'envs/sourmash.yaml',
+    shell:"""
+        sourmash sig cat {input.zip_file} -k {wildcards.k} -o {output.k_zip_file}
+    """
+
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
 
-#rule quarto_report:
-#    input:
-#        report = "{o}/data/update-report.{d}-{D}.txt",
-#        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
-#        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
-#        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
-#    output:
-#        "{o}/report/report.{r}.html"
-#    params:
-#        log = "../logs/{d}_{D}_report.log",
-#        report_title = "AllTheBacteria's {D} Database Update Report",
-#        old_date = OLD_DATES,
-#        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZ
-#ES]),
-#        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
-#    conda: "envs/quarto.yaml",
-#    resources:
-#        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
-#        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-#        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
-#        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
-#        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-#    shell:
-#        """
-#        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
-#        # This will be a stand-alone html document and needs to embed-resources
-#        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
-#        mkdir -p {wildcards.d}-{wildcards.D}.temp
-#        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
-#        cd {wildcards.d}-{wildcards.D}.temp/
-#
-#        DIRNAME=$(dirname "{output}")
-#
-#        quarto render report.qmd \
-#            -P details_files:../{input.report} -P old_details:{params.old_date} \
-#            -P new_details:{wildcards.d} -P old_db:{params.old_db} \
-#            -P new_db:{params.new_db} -P old_mf:../{input.old_mf} \
-#            -P new_mf:../{input.new_mf} -P failures:../{input.failures} \
-#            -P report_title:{params.report_title} -P config:"{config}"
-#        # 2> {params.log}
-#
-#        # the `--output` arg adds an unnecessary `../` to the output file path
-#        # https://github.com/quarto-dev/quarto-cli/issues/10129
-#        # just mving it back in place
-#
-#        mv report.html ../{output}
-#        cd ..
-#        rm -rf {wildcards.d}-{wildcards.D}.temp
-#        """
+rule quarto_report:
+    input:
+        unpack(getInputFilesForLinks),
+        meta = "{o}/allthebacteria-r{r}-metadata-links.txt",
+        new_mf = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-mf.csv",
+        names = "{o}/allthebacteria-r{r}-metadata/sylph.tsv",
+        idents = "{o}/allthebacteria-r{r}-metadata/ident_list.txt",
+        missing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-missing.csv",
+        existing = "{o}/allthebacteria-r{r}-metadata/allthebacteria-r{r}-existing.csv",
+        missing_files = "{o}/workflow-cleanup/allthebacteria-r{r}-missing-files.csv",
+    output:
+        "{o}/report/report.allthebacteria-r{r}.html"
+    params:
+        report_title = "AllTheBacteria's {r} Database Release Creation Report",
+        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/allthebacteria-r{wildcards.r}-sigs/allthebacteria-r{wildcards.r}-k{k}.zip"' for k in KSIZES]),
+        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
+        scale = config.get('scale_value'),
+    conda: "envs/quarto.yaml",
+    resources:
+        mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    shell:
+        """
+        # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
+        # This will be a stand-alone html document and needs to embed-resources
+        # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
+        mkdir -p {wildcards.r}.temp
+        cp scripts/report.qmd {wildcards.r}.temp/
+        cd {wildcards.r}.temp/
+
+        DIRNAME=$(dirname "{output}")
+
+        quarto render report.qmd \
+            -P new_details:{wildcards.r}          -P data_links:{input.data} \
+            -P meta_links:{input.meta}            -P new_db:{params.new_db} \
+            -P new_mf:{input.new_mf}              -P missing:{input.missing} \
+            -P report_title:"{params.report_title}" -P config:"{config}" \
+            -P names:{input.names}                -P idents:{input.idents} \
+            -P existing:{input.existing}          -P missing_files:{input.missing_files} \
+            -P output_dir:{wildcards.o}           -P k_list:{params.k_list}
+ 
+        # the `--output` arg adds an unnecessary `../` to the output file path
+        # https://github.com/quarto-dev/quarto-cli/issues/10129
+        # just mving it back in place
+
+        mv report.html {output}
+        cd ..
+        rm -rf {wildcards.r}.temp
+        """

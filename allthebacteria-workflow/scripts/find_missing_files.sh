@@ -2,7 +2,7 @@
 
 # Check for the correct number of arguments
 if [ "$#" -ne 4 ]; then
-    echo "Usage: $0 DATA_DIR IDENT_FILE OUTPUT THREADS"
+    echo "Usage: $0 DATA_DIR MISSING_IDENT_FILE OUTPUT THREADS"
     exit 1
 fi
 

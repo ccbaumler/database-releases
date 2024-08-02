@@ -17,7 +17,7 @@ releases:
 # The location of the ftp_link_list.py
 # script output. The directory containing
 # all the files of assembly filenames
-# Note: These files must contain "r{releases}"
+# Note: These files must contain "r{release-number}"
 
 # example
 # files_of_filenames:
