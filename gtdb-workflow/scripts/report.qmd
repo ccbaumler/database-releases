@@ -31,12 +31,18 @@ params:
   reps_missed: default_reps_missing_sigs
   reps_gathered: default_reps_gathered_sigs
   lineage: default_lineage
+  reps_lineage: default_reps_lineage
   recovered: default_recovered_genomes
   manual_download: default_man_download
   manual_check: default_man_check
   manual_output: default_man_output
   manual_failed: default_man_fail
   manual_log: default_man_log
+  manual_reps_download: default_reps_download
+  manual_reps_check: default_reps_check
+  manual_reps_output: default_reps_output
+  manual_reps_failed: default_reps_fail
+  manual_reps_log: default_reps_log
   output_dir: output/dir/path
   ar: default_Ar_metadata
   bac: default_bac_metadata
@@ -67,7 +73,7 @@ for (i in seq_along(new_db_lst[[1]])) {
     old_name <- old_db_lst[[1]][i]
     reps_name <- new_reps_db_lst[[1]][i]
 
-    lst <- paste("  - Updated", old_name, "to create", basename(new_name), "and" basename(reps_name) )
+    lst <- paste("  - Updated", old_name, "to create", basename(new_name), "and", basename(reps_name) )
     cat(lst, "\n\n")
 }
 ```
@@ -156,14 +162,14 @@ writeLines(readLines(params$missing_report, n=5))
 ::: {.callout-note collapse="true"}
 ## Expand for `r basename(params$existing_report)` details
 ```{r}
-writeLines(readLines(params$params$existing_report))
+writeLines(readLines(params$existing_report))
 ```
 :::
 
 ::: {.callout-note collapse="true"}
 ## Expand for `r basename(params$missing_report)` details
 ```{r}
-writeLines(readLines(params$params$missing_report))
+writeLines(readLines(params$missing_report))
 ```
 :::
 
@@ -243,12 +249,12 @@ cd_str <- glue::glue("cd {params$output_dir}")
 sketch_str <- glue::glue('sourmash scripts gbsketch workflow-cleanup/{basename(params$manual_download)} -o workflow-cleanup{basename(params$manual_output)} --failed workflow-cleanup/{basename(params$manual_failed)} --param-str "dna,{params$k_list},scaled={params$scale},abund" -r 5 -g 2> workflow-cleanup/{basename(params$manual_log)}')
 reps_sketch_str <- glue::glue('sourmash scripts gbsketch workflow-cleanup/{basename(params$manual_reps_download)} -o workflow-cleanup{basename(params$manual_reps_output)} --failed workflow-cleanup/{basename(params$manual_reps_failed)} --param-str "dna,{params$k_list},scaled={params$scale},abund" -r 5 -g 2> workflow-cleanup/{basename(params$manual_reps_log)}')
 mv_str <- glue::glue("mv {basename(new_db_lst[[1]][1])} {basename(new_db_lst[[1]][2])} {basename(new_db_lst[[1]][3])} {basename(new_reps_db_lst[[1]][1])} {basename(new_reps_db_lst[[1]][2])} {basename(new_reps_db_lst[[1]][3])} workflow-cleanup/ && cd workflow-cleanup/")
-rep1_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][1])} -k {reticulate::py$config_dict$k_values[1]} -o ../{new_reps_db_lst[[1]][1]}")
-rep2_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][2])} -k {reticulate::py$config_dict$k_values[2]} -o ../{new_reps_db_lst[[1]][2]}")
-rep3_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][3])} -k {reticulate::py$config_dict$k_values[3]} -o ../{new_reps_db_lst[[1]][3]}")
-cat1_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][1])} -k {reticulate::py$config_dict$k_values[1]} -o ../{new_db_lst[[1]][1]}")
-cat2_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][2])} -k {reticulate::py$config_dict$k_values[2]} -o ../{new_db_lst[[1]][2]}")
-cat3_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][3])} -k {reticulate::py$config_dict$k_values[3]} -o ../{new_db_lst[[1]][3]}")
+rep1_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][1])} -k {reticulate::py$config_dict$k_values[1]} -o ../{basename(new_reps_db_lst[[1]][1])}")
+rep2_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][2])} -k {reticulate::py$config_dict$k_values[2]} -o ../{basename(new_reps_db_lst[[1]][2])}")
+rep3_str <- glue::glue("sourmash sig cat {basename(params$manual_reps_output)} {basename(new_reps_db_lst[[1]][3])} -k {reticulate::py$config_dict$k_values[3]} -o ../{basename(new_reps_db_lst[[1]][3])}")
+cat1_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][1])} -k {reticulate::py$config_dict$k_values[1]} -o ../{basename(new_db_lst[[1]][1])}")
+cat2_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][2])} -k {reticulate::py$config_dict$k_values[2]} -o ../{basename(new_db_lst[[1]][2])}")
+cat3_str <- glue::glue("sourmash sig cat {basename(params$manual_output)} {basename(new_db_lst[[1]][3])} -k {reticulate::py$config_dict$k_values[3]} -o ../{basename(new_db_lst[[1]][3])}")
 
 # And print the strings into a markdown code block
 cat(cd_str)

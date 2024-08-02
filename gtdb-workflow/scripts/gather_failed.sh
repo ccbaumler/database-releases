@@ -52,6 +52,6 @@ echo "There are $(sort double-checking.csv | uniq -c | grep -v '^ *1 ' | wc -l) 
 
 echo -e "\nRecovered $(tail -n +2 $OUTPUT_REPS | wc -l)/$(tail -n +2 $CHECK_REPS | wc -l) missing genomes for manual download and addition to the Reps Database"
 echo "The remaining $(tail -n +2 $MANUAL_REPS | wc -l) missing genomes must be manually checked and may be suspended genomes"
-echo "There are $(sort double-checking_reps.csv | uniq -c | grep -v '^ *1 ' | wc -l) duplicates in $OUTPUT_REPS"
+echo "There are $(sort double-checking_reps.csv | uniq -c | grep -v '^ *1 ' | wc -l) duplicates in $(basename $OUTPUT_REPS) file"
 
 echo -e "\nCheck the report files for more information on the suspended genomes most likely missing from the final database"

@@ -437,7 +437,7 @@ rule quarto_report:
         ar53='{o}/data/ar53_metadata_rs{r}.tsv',
         bac120='{o}/data/bac120_metadata_rs{r}.tsv',
     output:
-        "{o}/report/report.{r}.html"
+        "{o}/report/report.gtdb-rs{r}.html"
     params:
         report_title = "GTDB's {r} Database Update Report",
         old_release= OLD_RELEASES,
@@ -458,7 +458,7 @@ rule quarto_report:
         scale = config.get('scale_value'),
     conda: "envs/quarto.yaml",
     resources:
-        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        mem_mb = lambda wildcards, attempt: 24 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
@@ -480,7 +480,7 @@ rule quarto_report:
             -P new_db:{params.new_db} -P new_reps_db:{params.new_reps_db} \
             -P old_mf:{input.old_mf} -P new_mf:{input.new_mf} \
             -P new_reps_mf:{input.new_reps_mf} -P existing_failures:{input.existing_failures} -P missing_failures:{input.missing_failures} \
-            -P report_title:{params.report_title} -P config:"{config}"
+            -P report_title:"{params.report_title}" -P config:"{config}" \
             -P good_assm:{input.good} -P bad_assm:{input.bad} \
             -P missed:{input.missing} -P gathered:{input.gathered} \
             -P reps_missed:{input.reps_missing} -P reps_gathered:{input.reps_gathered} \
@@ -490,14 +490,14 @@ rule quarto_report:
             -P manual_check:{params.man_check} -P manual_reps_download:{params.reps} \
             -P manual_reps_output:{params.reps_out} -P manual_reps_failed:{params.reps_fail} \
             -P manual_reps_check:{params.reps_check} -P manual_reps_log:{params.reps_log} -P output_dir:{wildcards.o} \
-            -P ar:{input.ar53} -P bac:{input.bac120}
+            -P ar:{input.ar53} -P bac:{input.bac120} \
             -P k_list:{params.k_list} -P scale:{params.scale}
 
         # the `--output` arg adds an unnecessary `../` to the output file path
         # https://github.com/quarto-dev/quarto-cli/issues/10129
         # just mving it back in place
 
-        mv report.html ../{output}
+        mv report.html {output}
         cd ..
         rm -rf {wildcards.r}.temp
         """
