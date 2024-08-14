@@ -36,16 +36,13 @@ def update_accessions(metadata_info, update_files):
     """Update accession numbers based on matching suffixes."""
 
     genbank_set = set(set_generator(update_files[0]))
-#    genbank_set.update(set_generator(update_files[1]))
     genbank_dict = {get_suffix_no_version(item): item for item in genbank_set}
     print('\n', len(genbank_dict))
 
-    # Update the metadata accessions
     def update_row(row):
         suffix = get_suffix_no_version(row['ident'])
         version = get_float_version(row['ident'])
         if suffix in genbank_dict:
-            # Replace the row's accession with the mapped accession
             match_item = genbank_dict[suffix]
             new_ver = get_float_version(match_item)
             accession = row['ident'].replace(version, new_ver)
