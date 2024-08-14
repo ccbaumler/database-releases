@@ -50,17 +50,36 @@ def get_suffix_no_version(name):
     assert '.' in suffix
     return suffix.split('.')[0]
 
-def row_generator(filename):
+def get_float_version(name):
+    suffix = get_suffix(name)
+    assert '.' in suffix
+    return suffix.split('.')[1]
+
+def row_generator(filename, quiet=False):
     with open(filename, 'rt') as fp:
-        print("Reading assembly summary file content...")
         for i, line in enumerate(fp, start=1):
-            if i % 1000 == 0:
-                print(f"Processing assembly summary: Line {i}", end='\r', flush=True)
+            if not quiet and i % 1000 == 0:
+                print(f"Reading line {i}", end='\r', flush=True)
 
             line = line.strip().split('\t')
             if line[0].startswith('#'):
                 continue
+
             yield line
+
+def set_generator(filename):
+    with open(filename, 'rt') as fp:
+        for i, line in enumerate(fp, start=1):
+            if i % 1000 == 0:
+                print(f"Reading line {i}", end='\r', flush=True)
+
+            line = line.strip().split('\t')
+            if line[0].startswith('accession'):
+                continue
+
+            accession = line[0].replace("RS_", "").replace("GB_", "")
+            yield accession
+
 
 def load_summary(filename, summary_type):
     if summary_type == 'assembly':
@@ -71,10 +90,10 @@ def load_summary(filename, summary_type):
         bad_idents_dict = defaultdict(list)
 
     with open(filename, 'rt') as fp:
-        print("Reading assembly summary file content...")
+        print("Reading assembly file content...")
         for i, line in enumerate(fp, start=1):
             if i % 1000 == 0:
-                print(f"Processing assembly summary: Line {i}", end='\r', flush=True)
+                print(f"Processing line {i}", end='\r', flush=True)
 
             line = line.strip().split('\t')
             if line[0].startswith('#'):
@@ -127,7 +146,7 @@ def filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict
 
     return keep_rows, removed_list, updated_version_list, updated_version_no_ident_list, bad_set
 
-def write_links_output(gather_ident_list, links):
+def write_links_output(gather_ident_list, links, gtdb=None):
     total = sum(1 for _ in gather_ident_list)
 
     with open(links, 'wt') as fp:
@@ -146,6 +165,19 @@ def write_links_output(gather_ident_list, links):
             organism_name = f'"{row[7]}"' if ',' in row[7] else row[7]
             infraspecific_name = f'"{row[8]}"' if ',' in row[8] else row[8]
             asm_name = f'"{row[15]}"' if ',' in row[15] else row[15]
+
+            # use gtdb prefix (GCA/F) and the updated version number
+            if gtdb:
+                suffix = get_suffix_no_version(accession)
+                version = get_float_version(accession)
+                if suffix in gtdb:
+                    matching_item = gtdb[suffix]
+                    gtdb_ver = get_float_version(matching_item)
+                    if version != gtdb_ver:
+                        print(f'replacing {accession} {version} with {matching_item} {gtdb_ver}')
+                        print(f'{matching_item.replace(gtdb_ver, version)}')
+                    accession = matching_item.replace(gtdb_ver, version)
+
 
             elements = []
 
@@ -180,6 +212,7 @@ def main():
     p.add_argument('-l', '--all-links', help='Output a CSV file of the full input manifest with updated versions')
     p.add_argument('-a', help='the Genbank assembly summary text file')
     p.add_argument('-b', help='the Genbank assembly summary history text file')
+    p.add_argument('-g', '--gtdb-metadata', nargs=2, help='The GTDB metadata files (bac120 and ar53)')
 
     args = p.parse_args()
 
@@ -228,7 +261,18 @@ def main():
             if g not in updated_version_no_ident_set:
                 new_list.append(g)
 
+
+    print("Reading assembly summary file...")
     good_doc_gen_list = list(row_generator(args.a))
+
+    # Create a dict to check gtdb idents against for correct naming
+    if args.gtdb_metadata:
+        print("Creating GTDB ident set")
+        gtdb_set = set(set_generator(args.gtdb_metadata[0]))
+        gtdb_set.update(set_generator(args.gtdb_metadata[1]))
+        gtdb_dict = {get_suffix_no_version(item): item for item in gtdb_set}
+        print('\n', len(gtdb_dict))
+
 
     if args.missing_genomes:
         keep_rows_set = {get_suffix(row['name']) for row in keep_rows}
@@ -252,7 +296,10 @@ def main():
             if get_suffix(row[0]) in kept_set or get_suffix_no_version(row[0]) in updated_version_no_ident_set
         ]
 
-        write_links_output(gather_ident_list, args.all_links)
+        if args.gtdb_metadata:
+            write_links_output(gather_ident_list, args.all_links, gtdb=gtdb_dict)
+        else:
+            write_links_output(gather_ident_list, args.all_links)
 
     if args.output or args.report:
         with open(args.output, 'w', newline='') as fp:
@@ -296,7 +343,7 @@ def main():
             print(f"Removed {n_suspect_suspension} identifiers because of suspected suspension of the genome.", file=fp)
             print(f"Removed {n_changed_version} because of changed version.", file=fp)
 
-            bad_doc_gen = row_generator(args.b)
+            bad_doc_gen = row_generator(args.b, quiet=True)
             suppressed_versioned = [line for line in bad_doc_gen if get_suffix(line[0]) in bad_set]
             print(f"---- {len(suppressed_versioned)} included into the bad list category ----", file=fp)
             for item in suppressed_versioned:
