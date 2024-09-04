@@ -8,6 +8,8 @@ import time
 import re
 from collections import defaultdict
 from sourmash import manifest
+import urllib.request
+from functools import lru_cache
 
 
 class GeneralManifestHandler:
@@ -40,6 +42,45 @@ def extract_urls(row):
             return urls[0]  # Only returns the first URL found
     return None
 
+@lru_cache(maxsize=1024)  # Cache up to 1024 URLs
+def generate_urls(accession, verbose=False, base_url=False):
+    accsplit = accession.split("_", 1)
+    if len(accsplit) != 2:
+        raise ValueError(f"ERROR: '{accession}' should have precisely one underscore!")
+
+    db, acc = accsplit
+    number, version = acc.split(".") if '.' in acc else (acc, '1')
+    number = "/".join([number[i:i + 3] for i in range(0, len(number), 3)])
+    url = f"https://ftp.ncbi.nlm.nih.gov/genomes/all/{db}/{number}"
+
+    if verbose:
+        print(f"Opening directory: {url}", file=sys.stderr)
+
+    try:
+        with urllib.request.urlopen(url) as response:
+            all_names = response.read().decode("utf-8")
+    except urllib.error.URLError as e:
+        print(f"Failed to open {url}: {e}", file=sys.stderr)
+        return None
+
+    if verbose:
+        print("Done!", file=sys.stderr)
+
+    for line in all_names.splitlines():
+        if line.startswith('<a href='):
+            name = line.split('"')[1][:-1]
+            db_, acc_, *_ = name.split("_")
+            if db_ == db and acc_.startswith(acc):
+                if base_url:
+                    return f"{url}/{name}"
+                else:
+                    return (
+                        f"{url}/{name}/{name}_genomic.fna.gz",
+                        f"{url}/{name}/{name}_assembly_report.txt",
+                    )
+
+    return None
+
 def get_suffix(name):
     ident = name.split(' ')[0]
     assert ident.startswith('GC')
@@ -65,7 +106,17 @@ def row_generator(filename, quiet=False):
             if line[0].startswith('#'):
                 continue
 
-            yield line
+            accession = f'"{line[0]}"' if ',' in line[0] else (line[0] if len(line) > 0 else None)
+            organism_name = f'"{line[7]}"' if ',' in line[7] else (line[7] if len(line) > 7 else None)
+            infraspecific_name = f'"{line[8]}"' if ',' in line[8] else (line[8] if len(line) > 8 else None)
+            asm_name = f'"{line[15]}"' if ',' in line[15] else (line[15] if len(line) > 15 else None)
+            ref_acc = f'"{line[17]}"' if ',' in line[17] else (line[17] if len(line) > 17 else None)
+            comparison = line[18] if len(line) > 18 else None
+            url = extract_urls(line) if extract_urls(line) is not None else (line[19] if len(line) > 19 else None)
+            if url is not None:
+                url = f'"{url}"' if ',' in url else url
+
+            yield (accession, organism_name, infraspecific_name, asm_name, ref_acc, url, comparison)
 
 def set_generator(filename):
     with open(filename, 'rt') as fp:
@@ -74,19 +125,20 @@ def set_generator(filename):
                 print(f"Reading line {i}", end='\r', flush=True)
 
             line = line.strip().split('\t')
-            if line[0].startswith('accession'):
+            if line[0].startswith('#'):
                 continue
 
-            accession = line[0].replace("RS_", "").replace("GB_", "")
-            yield accession
+            accession = line[0]
+            rep_status = line[4] if len(line) > 4 else None
+            ref_acc = line[17] if len(line) > 17 else None
+            comparison = line[18] if len(line) > 18 else None
 
+            yield (accession, rep_status, ref_acc, comparison)
 
 def load_summary(filename, summary_type):
     if summary_type == 'assembly':
-        good_idents = set()
-        good_idents_no_version = set()
+        good_idents_dict = defaultdict(lambda: {'gca_version': None, 'gcf_version': None, 'refseq_acc': None, 'comparison': None})
     if summary_type == 'historic':
-        bad_idents = set()
         bad_idents_dict = defaultdict(list)
 
     with open(filename, 'rt') as fp:
@@ -100,111 +152,158 @@ def load_summary(filename, summary_type):
                 continue
             
             accession = line[0]
-            assert accession.startswith('GC')
+            assert accession.startswith('GCA')
+            
             suffix = get_suffix(accession)
+            prefix = accession.split('_')[0]
+            gca_version = get_float_version(accession)
+            gcf_version = None
+
+            ref_acc = line[17] if len(line) > 17 else None
+            if ref_acc != 'na': # ensure that the accessions are identical where it counts
+                assert ref_acc.startswith('GCF')
+                assert get_suffix_no_version(accession) == get_suffix_no_version(ref_acc)
+                gcf_version = get_float_version(ref_acc)
+
+            comparison = line[18] if len(line) > 18 else None
+
+            suffix_no_version = get_suffix_no_version(accession)
 
             if summary_type == 'assembly':
-                good_idents.add(suffix)
-                suffix_no_version = get_suffix_no_version(accession)
-                good_idents_no_version.add(suffix_no_version)
+                good_idents_dict[suffix_no_version]['gca_version'] = gca_version
+                good_idents_dict[suffix_no_version]['refseq_acc'] = ref_acc
+                good_idents_dict[suffix_no_version]['gcf_version'] = gcf_version
+                good_idents_dict[suffix_no_version]['comparison'] = comparison
 
             if summary_type == 'historic':
-                bad_idents.add(suffix)
+
                 assembly, version = suffix.split('.')
                 bad_idents_dict[assembly].append(version)
 
     if summary_type == 'assembly':
-        return good_idents, good_idents_no_version
+        return good_idents_dict
     elif summary_type == 'historic':
-        return bad_idents, bad_idents_dict
+        return bad_idents_dict
 
-def filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict):
+def filter_manifest(old_mf, good_idents_dict, bad_idents_dict):
     keep_rows = []
     removed_list = []
-    updated_version_list = []
-    updated_version_no_ident_list = set()
+    updated_from_list = []
+    updated_to_set = set()
     bad_set = set()
 
-    bad_idents = set(key + '.' + value for key, values in bad_idents_dict.items() for value in values)
+    #bad_idents = set(key + '.' + value[0] for key, values in bad_idents_dict.items() for value in values)
 
     for row in old_mf.rows:
         name = row['name']
-        mf_ident = get_suffix(name)
-        mf_ident_no_version = get_suffix_no_version(name)
+        mf_prefix = name.split('_')[0]
+        mf_ident = get_suffix_no_version(name) # the ident number are identical for GCA and GCF
+        mf_version = get_float_version(name)
 
-        if mf_ident in good_idents:
-            keep_rows.append(row)
-        else: #mf_ident not in good_idents
-            if mf_ident_no_version in good_idents_no_version:
-                updated_version_list.append(name)
-                updated_version_no_ident_list.add(mf_ident_no_version)
-            else: #mf_idents with and without version not in good_idents
-                removed_list.append(name)
+        if mf_ident in good_idents_dict:
 
-        if mf_ident in bad_idents:
-            bad_set.add(mf_ident)
+            if mf_prefix == 'GCF':
+                ref_acc = good_idents_dict[mf_ident].get('refseq_acc')
 
-    return keep_rows, removed_list, updated_version_list, updated_version_no_ident_list, bad_set
+                if ref_acc and ref_acc != 'na':
+                    gcf_version = good_idents_dict[mf_ident].get('gcf_version')
 
-def write_links_output(gather_ident_list, links, gtdb=None):
-    total = sum(1 for _ in gather_ident_list)
+                    if mf_version == gcf_version:
+                        keep_rows.append(row)
+                    else:
+                        updated_from_list.append(name)
+                        updated_to_set.add(f'GCF{mf_ident}.{gcf_version}')
+                else:
+                    # Use GCA version if GCF is not in assembly summary
+                    gca_version = good_idents_dict[mf_ident].get('gca_version')
+
+                    if mf_version == gca_version:
+                        keep_rows.append(row)
+                    else:
+                        updated_from_list.append(name)
+                        updated_to_set.add(f'GCA{mf_ident}.{gca_version}')
+
+            elif mf_prefix == 'GCA':
+                gca_version = good_idents_dict[mf_ident].get('gca_version')
+
+                if mf_version == gca_version:
+                    keep_rows.append(row)
+                else:
+                    updated_from_list.append(name)
+                    updated_to_set.add(f'GCA{mf_ident}.{gca_version}')
+
+            else:
+                print(f"Manifest idents do not contain either 'GCA' or 'GCF' identifiers.")
+                print(f"Exiting...")
+                sys.exit(1)
+
+        else: # Manifest idents are not in assembly summary (i.e. removed from the current genbank)
+            removed_list.append(name)
+
+        # manifest item is in assembly historic (i.e. removed/suspressed)
+        if mf_ident in bad_idents_dict:
+           if mf_version == bad_idents_dict[mf_ident]:
+               bad_set.add(name)
+
+    return keep_rows, removed_list, updated_from_list, updated_to_set, bad_set
+
+def write_links_output(lists, links):
+    total = sum(len(lst) for _, lst in lists)
+    n = 0
 
     with open(links, 'wt') as fp:
         header = ["accession", "name", "ftp_path"]
         fp.write(','.join(header) + '\n')
-        n = 0
-        for n, row in enumerate(gather_ident_list):
 
-            if n % 100 == 0:
-                print(f'...Writing {links}: Line {n} of {total}', end='\r', flush=True)
+        for lst_name, lst in lists:
+            print(f"Writing from {lst_name} now...")
+            for row in lst:
+                if n % 10 == 0:
+                    print(f'...Writing {links}: Line {n} of {total}', end='\r', flush=True)
 
-            url = extract_urls(row)
-            if url is not None:
-                url = f'"{url}"' if ',' in url else url
-            accession = f'"{row[0]}"' if ',' in row[0] else row[0]
-            organism_name = f'"{row[7]}"' if ',' in row[7] else row[7]
-            infraspecific_name = f'"{row[8]}"' if ',' in row[8] else row[8]
-            asm_name = f'"{row[15]}"' if ',' in row[15] else row[15]
+                if lst_name.startswith("GCA"):
+                    accession = row[0]
+                    url = row[5]
+                elif lst_name.startswith("GCF"):
+                    accession = row[4]
+                    comparison = row[6]
 
-            # use gtdb prefix (GCA/F) and the updated version number
-            if gtdb:
-                suffix = get_suffix_no_version(accession)
-                version = get_float_version(accession)
-                if suffix in gtdb:
-                    matching_item = gtdb[suffix]
-                    gtdb_ver = get_float_version(matching_item)
-                    if version != gtdb_ver:
-                        print(f'replacing {accession} {version} with {matching_item} {gtdb_ver}')
-                        print(f'{matching_item.replace(gtdb_ver, version)}')
-                    accession = matching_item.replace(gtdb_ver, version)
+                    if comparison == 'identical':
+                        url = row[5]
+                    else:
+                        url = generate_urls(accession, base_url=True)
+                organism_name = row[1]
+                infraspecific_name = row[2]
+                asm_name = row[3]
 
+                elements = []
 
-            elements = []
+                if accession != 'na':
+                    elements.append(accession)
+                if organism_name != 'na':
+                    elements.append(organism_name)
+                if infraspecific_name != 'na':
+                    elements.append(infraspecific_name)
+                if asm_name != 'na':
+                    elements.append(asm_name)
 
-            if accession != 'na':
-                elements.append(accession)
-            if organism_name != 'na':
-                elements.append(organism_name)
-            if infraspecific_name != 'na':
-                elements.append(infraspecific_name)
-            if asm_name != 'na':
-                elements.append(asm_name)
+                name = ' '.join([e.strip('"') for e in elements])
+                if ',' in name:
+                    name = f'"{name}"'
 
-            name = ' '.join([e.strip('"') for e in elements])
-            if ',' in name:
-                name = f'"{name}"'
+                if url:
+                    line = f"{accession},{name},{url}\n"
+                    fp.write(line)
 
-            if url:
-                line = f"{accession},{name},{url}\n"
-                fp.write(line)
+                n += 1
 
-        print(f'\n...Wrote {links}: Line {n+1} of {total}  ')
-
+            print(f"Wrote {n}/{total} rows in {lst_name} now...      ")
+        print(f'\n...Wrote {links}: Line {n} of {total}  ')
 
 def main():
     p = argparse.ArgumentParser()
 
-    p.add_argument('old_mf', nargs='?', help='existing sourmash database manifest')
+    p.add_argument('old_mf', nargs='?', help='existing sourmash database manifest or lineage file (i.e. picklist output from `sig check` using lineage file)')
     p.add_argument('--report', nargs='?', help='details of removed etc., for humans')
     p.add_argument('-o', '--output', nargs='?', help='manifest cleansed of the impure')
     p.add_argument('-u', '--updated-version', help='Output a CSV file where each line is the updated versions of genomes existing in old manifest')
@@ -212,17 +311,16 @@ def main():
     p.add_argument('-l', '--all-links', help='Output a CSV file of the full input manifest with updated versions')
     p.add_argument('-a', help='the Genbank assembly summary text file')
     p.add_argument('-b', help='the Genbank assembly summary history text file')
-    p.add_argument('-g', '--gtdb-metadata', nargs=2, help='The GTDB metadata files (bac120 and ar53)')
 
     args = p.parse_args()
 
     print(f"\nLoading assembly summary from '{args.a}'")
-    good_idents, good_idents_no_version = load_summary(args.a, summary_type = 'assembly')
-    print(f"\nLoaded {len(good_idents)} identifiers and {len(good_idents_no_version)} identifiers without version number")
+    good_idents_dict = load_summary(args.a, summary_type = 'assembly')
+    print(f"Loaded {len(good_idents_dict)} identifiers with their individual {', '.join(list(sorted({key for d in good_idents_dict.values() for key in d.keys()})))} information")
 
     print(f"\nLoading historical summary from '{args.b}'")
-    bad_idents, bad_idents_dict = load_summary(args.b, summary_type = 'historic')
-    print(f"\nLoaded {len(bad_idents)} identifiers. {len(bad_idents_dict)} identifiers have multiple versions")
+    bad_idents_dict = load_summary(args.b, summary_type = 'historic')
+    print(f"Loaded {len(bad_idents_dict)} identifiers with {sum(len(values) for values in bad_idents_dict.values())} total versions across the identifiers")
 
     ident = None
     new_mf = None
@@ -232,7 +330,7 @@ def main():
         old_mf = manifest.BaseCollectionManifest.load_from_filename(args.old_mf)
         print(f"Loaded manifest with {len(old_mf.rows)} rows")
 
-        keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
+        keep_rows, removed_list, updated_from_list, updated_to_set, bad_set = filter_manifest(old_mf, good_idents_dict, bad_idents_dict)
 
         new_mf = manifest.CollectionManifest(keep_rows)
 
@@ -248,114 +346,155 @@ def main():
             old_mf.read_csv()
 
             print(f"\nLoaded manifest with {len(old_mf.rows)} rows")
-            keep_rows, removed_list, updated_version_list, updated_version_no_ident_set, bad_set = filter_manifest(old_mf, good_idents, good_idents_no_version, bad_idents_dict)
+            keep_rows, removed_list, updated_from_list, updated_to_set, bad_set = filter_manifest(old_mf, good_idents_dict, bad_idents_dict)
 
         else:
             print("\nNo Sourmash Manifest or 'ident' column found... \nExiting script")
             sys.exit(1)
 
+    # Create a list of the possible new genomes from assembly summary
     new_list = []
     keep_rows_no_version_set = {get_suffix_no_version(row['name']) for row in keep_rows}
-    for g in good_idents_no_version:
-        if g not in keep_rows_no_version_set:
-            if g not in updated_version_no_ident_set:
-                new_list.append(g)
+    updated_to_no_ident_set = {get_suffix_no_version(item) for item in updated_to_set}
+    for k in good_idents_dict.keys():
+        if k not in keep_rows_no_version_set:
+            if k not in updated_to_no_ident_set:
+                new_list.append(k)
 
+    if args.missing_genomes or args.updated_version or args.all_links:
+        print('\nWriting link files...')
+        print("Reading assembly summary file...")
+        good_doc_gen_list = list(row_generator(args.a))
 
-    print("Reading assembly summary file...")
-    good_doc_gen_list = list(row_generator(args.a))
+        if args.missing_genomes: #this is only designed for GCA and genbank databases, including GCF will yield assert errors
+            kept_set = {row['name'].split(' ')[0] for row in keep_rows}
 
-    # Create a dict to check gtdb idents against for correct naming
-    if args.gtdb_metadata:
-        print("Creating GTDB ident set")
-        gtdb_set = set(set_generator(args.gtdb_metadata[0]))
-        gtdb_set.update(set_generator(args.gtdb_metadata[1]))
-        gtdb_dict = {get_suffix_no_version(item): item for item in gtdb_set}
-        print('\n', len(gtdb_dict))
+            gca_list = [row for row in good_doc_gen_list if row[0] not in kept_set and row[0] not in updated_to_set]
 
+            assert len(new_list) == len(gca_list)
 
-    if args.missing_genomes:
-        keep_rows_set = {get_suffix(row['name']) for row in keep_rows}
-        gather_ident_list = [
-            row for row in good_doc_gen_list
-            if get_suffix(row[0]) not in keep_rows_set
-            if get_suffix_no_version(row[0]) not in updated_version_no_ident_set
-            ]
+            print(f"Found {len(gca_list)} missing sequences...")
 
-        write_links_output(gather_ident_list, args.missing_genomes)
+            write_links_output([("GCA_list", gca_list)], args.missing_genomes)
 
-    if args.updated_version:
-        gather_ident_list = [row for row in good_doc_gen_list if get_suffix_no_version(row[0]) in updated_version_no_ident_set]
-        write_links_output(gather_ident_list, args.updated_version)
+        if args.updated_version:
 
-    if args.all_links:
-        kept_set = {get_suffix(row['name']) for row in keep_rows}
+            gca_list = [row for row in good_doc_gen_list if row[0] in updated_to_set]
 
-        gather_ident_list = [
-            row for row in good_doc_gen_list
-            if get_suffix(row[0]) in kept_set or get_suffix_no_version(row[0]) in updated_version_no_ident_set
-        ]
+            gcf_list = [row for row in good_doc_gen_list if row[4] in updated_to_set]
 
-        if args.gtdb_metadata:
-            write_links_output(gather_ident_list, args.all_links, gtdb=gtdb_dict)
-        else:
-            write_links_output(gather_ident_list, args.all_links)
+            expected_count = len(updated_to_set)
+            actual_count = len(gca_list) + len(gcf_list)
+            
+            print(f"Expected {expected_count} sequences to update")
+            print(f"Actual found sequences to update: {actual_count}")
+            print(f"GenBank (GCA) = {len(gca_list)} | RefSeq (GCF) = {len(gcf_list)}")
+            print(f"Missing sequences? {expected_count - actual_count}")
 
-    if args.output or args.report:
+            if expected_count != actual_count:
+                column_0_set = set(row[0] for row in good_doc_gen_list)
+                column_4_set = set(row[4] for row in good_doc_gen_list)
+
+                # Unite sets
+                combined_set = column_0_set | column_4_set
+
+                # Find missing by subtracting sets
+                missing_from_lists = updated_to_set - combined_set
+
+                # Print the missing elements
+                print(f"Number of missing elements: {len(missing_from_lists)}")
+                if missing_from_lists:
+                    print("Missing elements from lists:")
+                    for missing_item in missing_from_lists:
+                        print(missing_item)
+
+            write_links_output([("GCA_list", gca_list), ("GCF_list", gcf_list)], args.updated_version)
+
+        if args.all_links:
+            kept_set = {row['name'].split(' ')[0] for row in keep_rows}
+
+            gca_list = [row for row in good_doc_gen_list if row[0] in kept_set or row[0] in updated_to_set]
+            gcf_list = [row for row in good_doc_gen_list if row[4] in kept_set or row[4] in updated_to_set]
+
+            write_links_output([("GCA_list", gca_list), ("GCF_list", gcf_list)], args.all_links)
+
+    if args.output:# or args.report:
         with open(args.output, 'w', newline='') as fp:
             if new_mf:
                 new_mf.write_to_csv(fp, write_header=True)
             else:
                 wr = csv.writer(fp)
-                wr.writerow(keep_rows)
+                with open(args.old_mf, 'r') as hf:
+                    header = next(csv.reader(hf))
+                    wr.writerow(header)
+
+                lineage_map = {
+                    'ident': 'name',
+                    'gtdb_representative': 'gtdb_representative',
+                    'superkingdom': 'superkingdom',
+                    'phylum': 'phylum',
+                    'class': 'class',
+                    'order': 'order',
+                    'family': 'family',
+                    'genus': 'genus',
+                    'species': 'species'
+                }
+
+                for row in keep_rows:
+                    ordered_row = [row[lineage_map[col]] for col in header]
+                    wr.writerow(ordered_row)
 
     n_removed = len(old_mf.rows) - len(keep_rows)
-    n_changed_version = len(updated_version_list)
+
+    assert n_removed == len(removed_list) + len(updated_to_set)
+    n_changed_version = len(updated_from_list)
     n_suspect_suspension = n_removed - n_changed_version
 
     creat_time = time.ctime(os.path.getctime(args.a))
     mod_time = time.ctime(os.path.getmtime(args.a))
 
-    print(f"\n\nFrom genome assemblies database:")
-    print(f"Loaded {len(good_idents)} identifiers from '{args.a}'")
-    print(f"(and loaded {len(good_idents_no_version)} identifiers without version number)")
-    print(f"File assembly database created on {creat_time}")
-    print(f"File assembly database last modified {mod_time}")
-
-    print(f"\nFrom '{args.old_mf}':")
-    print(f"Kept {len(keep_rows)} of {len(old_mf.rows)} identifiers.")
+    print(f"\n\nFrom '{args.a}:")
+    print(f"Loaded {len(good_idents_dict)} identifiers")
+    print(f"Each contains a unique {', '.join(list(sorted({key for d in good_idents_dict.values() for key in d.keys()})))}")
 
     print(f"\nFrom '{args.b}':")
-    print(f"Kept {len(bad_idents)} of {len(bad_idents)} identifiers.")
+    print(f"Loaded {len(bad_idents_dict)} identifiers")
+    print(f"Loaded {sum(len(values) for values in bad_idents_dict.values())} total versions across the identifiers")
+
+    print(f"\nFile assembly databases created on {creat_time}")
+    print(f"File assembly databases last modified {mod_time}")
+
+    print(f"\nFrom '{args.old_mf}':")
+    print(f"Kept {len(keep_rows)} of {len(old_mf.rows)} ({len(keep_rows)/len(old_mf.rows)*100:.2f}%) identifiers.")
 
     print(f"\nNew manifest '{args.output}':")
     print(f"Kept {len(keep_rows)} identifiers.")
-    print(f"Included {len(new_list)} new genomes by new identifiers.")
+    if args.missing_genomes: print(f"Included {len(new_list)} new genomes by new identifiers.")
     print(f"Removed {n_removed} total identifiers.")
     print(f"Removed {n_changed_version} identifiers because of version change.")
-    print(f"Removed {n_suspect_suspension} identifiers because of suspected suspension of the genome.\n\n")
+    print(f"Removed {n_suspect_suspension} identifiers because of suspected suspension of the genome.\n")
 
     if args.report:
         with open(args.report, 'wt') as fp:
             print(f"From {len(old_mf.rows)} in '{args.old_mf}':", file=fp)
-            print(f"Kept {len(keep_rows)} in '{args.output}.", file=fp)
+            print(f"Kept {len(keep_rows)} ({len(keep_rows)/len(old_mf.rows)*100:.2f}%) in '{args.output}.", file=fp)
             print(f"Removed {n_removed} total.", file=fp)
             print(f"Removed {n_suspect_suspension} identifiers because of suspected suspension of the genome.", file=fp)
             print(f"Removed {n_changed_version} because of changed version.", file=fp)
 
-            bad_doc_gen = row_generator(args.b, quiet=True)
-            suppressed_versioned = [line for line in bad_doc_gen if get_suffix(line[0]) in bad_set]
-            print(f"---- {len(suppressed_versioned)} included into the bad list category ----", file=fp)
-            for item in suppressed_versioned:
-                print(",".join(str(i) for i in item), file=fp)
+#            bad_doc_gen = row_generator(args.b, quiet=True)
+#            suppressed_versioned = [line for line in bad_doc_gen if get_suffix(line[0]) in bad_set]
+#            print(f"---- {len(suppressed_versioned)} included into the bad list category ----", file=fp)
+#            for item in suppressed_versioned:
+#                print(",".join(str(i) for i in item), file=fp)
 
             print(f"---- {n_suspect_suspension} removed because presumed guilt ----", file=fp)
             print("\n".join(removed_list), file=fp)
 
             print(f"---- {n_changed_version} removed because version changed ----", file=fp)
-            print("\n".join(updated_version_list), file=fp)
+            print("\n".join(updated_from_list), file=fp)
 
-        print(f'\n... Wrote {args.report}')
+        print(f'... Wrote {args.report}\n')
 
 
 if __name__ == '__main__':

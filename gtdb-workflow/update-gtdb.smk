@@ -50,11 +50,18 @@ rule all:
         expand("{o}/data/final.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/final-reps.gtdb-{r}.missing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/final-reps.gtdb-{r}.existing.csv", o=OUTDIR, r=RELEASES),
-        expand("{o}/report/report.{r}.html", o=OUTDIR, r=RELEASES),
+        expand("{o}/report/report.gtdb-rs{r}.html", o=OUTDIR, r=RELEASES),
 
 rule tax:
     input:
         expand("{o}/gtdb-rs{r}.lineages.csv", o=OUTDIR, r=RELEASES),
+
+rule get_metadata:
+    input:
+        expand('{o}/data/assembly_summary.bac.x.ar.txt', o=OUTDIR),
+        expand('{o}/data/assembly_summary_historical.bac.x.ar.txt', o=OUTDIR),
+        expand('{o}/data/bac120_metadata_rs{r}.tsv', o=OUTDIR, r=RELEASES),
+        expand('{o}/data/ar53_metadata_rs{r}.tsv', o=OUTDIR, r=RELEASES),
 
 rule download_metadata:
     output:
@@ -128,7 +135,7 @@ rule get_ss_db:
 
 rule make_taxonomy:
     input:
-        script = 'scripts/make-gtdb-taxonomy.py',
+        script = 'scripts/make-updated-gtdb-taxonomy.py',
         ar53_metadata='{o}/data/ar53_metadata_rs{r}.tsv',
         bac120_metadata='{o}/data/bac120_metadata_rs{r}.tsv',
     output:
@@ -294,12 +301,6 @@ rule extract_db:
     shell:"""
         sourmash signature cat {input.dbs} --picklist {input.clean}:name:name -k {wildcards.k} -o {output.dbs}
     """
-
-# Then need to combine everything into a single database
-#        dbs = "{o}/gtdb-rs{r}-k{k}.clean.zip",
-#        db = temporary("{o}/gtdb-{r}.clean-missing.zip"),
-#        db = temporary("{o}/gtdb-{r}.updated-versions-missing.zip"),
-#        db = temporary("{o}/gtdb-{r}.updated-versions-existing.zip"),
 
 rule final_db:
     input:

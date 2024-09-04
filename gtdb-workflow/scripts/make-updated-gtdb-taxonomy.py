@@ -3,6 +3,8 @@
 import sys
 import argparse
 import pandas as pd
+from collections import defaultdict
+
 
 def get_suffix(name):
     ident = name.split(' ')[0]
@@ -19,7 +21,9 @@ def get_float_version(name):
     assert '.' in suffix
     return suffix.split('.')[1]
 
-def set_generator(filename):
+def create_dict(filename):
+    genbank_dict = defaultdict(lambda: {'gca_version': None, 'gcf_version': None, 'refseq_acc': None, 'comparison': None})
+
     with open(filename, 'rt') as fp:
         for i, line in enumerate(fp, start=1):
             if i % 1000 == 0:
@@ -30,27 +34,67 @@ def set_generator(filename):
                 continue
 
             accession = line[0]
-            yield accession
+            assert accession.startswith('GCA')
+
+            gca_version = get_float_version(accession)
+            gcf_version = None
+
+            ref_acc = line[17] if len(line) > 17 else None
+            if ref_acc != 'na': # ensure that the accessions are identical where it counts
+                assert ref_acc.startswith('GCF')
+                assert get_suffix_no_version(accession) == get_suffix_no_version(ref_acc)
+                gcf_version = get_float_version(ref_acc)
+
+            comparison = line[18] if len(line) > 18 else None
+
+            suffix_no_version = get_suffix_no_version(accession)
+
+            genbank_dict[suffix_no_version]['gca_version'] = gca_version
+            genbank_dict[suffix_no_version]['refseq_acc'] = ref_acc
+            genbank_dict[suffix_no_version]['gcf_version'] = gcf_version
+            genbank_dict[suffix_no_version]['comparison'] = comparison
+
+    return genbank_dict
 
 def update_accessions(metadata_info, update_files):
     """Update accession numbers based on matching suffixes."""
-
-    genbank_set = set(set_generator(update_files[0]))
-    genbank_dict = {get_suffix_no_version(item): item for item in genbank_set}
-    print('\n', len(genbank_dict))
+    genbank_dict = create_dict(update_files)
 
     def update_row(row):
+        accession = row['ident']
+        prefix = accession.split('_')[0]
         suffix = get_suffix_no_version(row['ident'])
         version = get_float_version(row['ident'])
-        if suffix in genbank_dict:
-            match_item = genbank_dict[suffix]
-            new_ver = get_float_version(match_item)
-            accession = row['ident'].replace(version, new_ver)
-            if version != new_ver:
-                print(f"Replacing {row['ident']} with {match_item}")
-                print(f'{accession}')
-            return accession
-        return row['ident']
+
+        if suffix not in genbank_dict:
+            return None
+
+        if prefix == "GCA":
+            gca_version = genbank_dict[suffix].get('gca_version')
+
+            if version != gca_version:
+                print(f"Updating {accession} to version {gca_version}")
+                accession = {f"GCA{suffix}.{gca_version}"}
+
+        elif prefix == "GCF":
+            ref_acc = genbank_dict[suffix].get('refseq_acc')
+
+            if ref_acc and ref_acc != 'na':
+                gcf_version = genbank_dict[suffix].get('gcf_version')
+
+                if version != gcf_version:
+                    print(f"Updating {accession} to version {gcf_version}")
+                    accession = {f"GCF{suffix}.{gcf_version}"}
+
+            else:
+                # Use GCA if GCF is not in assembly summary
+                gca_version = genbank_dict[suffix].get('gca_version')
+
+                if version != gca_version:
+                    print(f"Updating {accession} to version {gca_version}")
+                    accession = {f"GCA{suffix}.{gca_version}"}
+
+        return accession
 
     metadata_info['ident'] = metadata_info.apply(update_row, axis=1)
     return metadata_info
@@ -83,7 +127,7 @@ def cmdline(sys_args):
     "Command line entry point w/argparse action."
     p = argparse.ArgumentParser()
     p.add_argument("--metadata-files", nargs="+", help="gtdb metadata files")
-    p.add_argument("--update-files", nargs="+", help="files generated when updating the database (update_sourmash_dbs.py)")
+    p.add_argument("--update-files", help="files used to compare against when updating the database (update_sourmash_dbs.py)")
     p.add_argument("-o", '--output',  help="output lineages csv")
     p.add_argument("-r", '--reps-csv',  help="also output representative lineages csv")
     args = p.parse_args()
