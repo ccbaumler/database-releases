@@ -62,6 +62,7 @@ Rules to preprocess the current sourmash databases:
   - collect_all
 - Cleanse the current database manifest and database with custom script
   - cleanse_manifest
+    - This script outputs a cleaned manifest and files used by [directsketch](https://github.com/sourmash-bio/sourmash_plugin_directsketch) to download sequences.
   - picklist_clean_db
 
 Rules to gather and sketch new or updated genomes into a new database:
@@ -93,7 +94,7 @@ Rule to generate a quarto report:
 
 ## Why?
 
-The database creation and updating should be transparent and possible to generate by anyone.
+Updating databases should be transparent, easy, and possible to generate by anyone.
 
 ## Authors
 
