@@ -48,6 +48,37 @@ snakemake -s update-genbank.smk -j 15 --use-conda --rerun-incomplete --resources
 > Memory: Approximately 50 GB.
 > Time: 2 days of runtime. 
 
+3. Workflow output:
+
+- Genbank sourmash databases: These ZIP files are the compressed, representative sequence databases for different domains and k-mer sizes.
+  - `genbank-20240712-bacteria-k21.zip`
+  - `genbank-20240712-bacteria-k31.zip`
+  - `genbank-20240712-bacteria-k51.zip`
+- Genbank lineage files: These CSV files are the Genbank accession (GCA#), Representative sequence identity (T/F), and Taxonomic lineage by ranks (i.e. 
+  - `lineages.bacteria.csv`
+- The `data/` directory: This directory contains the TXT and CSV Files used through the workflow (i.e. metadata files).
+  - `assembly_summary.bacteria.txt` -- contains data on the current good sequence files in genbank
+  - `assembly_summary_historical.bacteria.txt` -- contains data on the current bad sequence files in genbank
+  - `collect-mf.2022.03-bacteria.csv` -- sourmash manifest of previous sourmash database
+  - `collect-mf.20240712-bacteria.csv` -- sourmash manifest of new sourmash database
+  - `genbank-20240712-bacteria.existing.csv` -- all the included sequences in the new sourmash manifest
+  - `genbank-20240712-bacteria.missing.csv` -- all the missing sequences from the new sourmash manifest
+  - `mf-clean.20240712-bacteria.csv` -- sourmash manifest of all shared sequences between old and new sourmash database
+  - `missing-genomes.20240712-bacteria.csv` -- sourmash manifest of all missing sequences for the new sourmash database
+  - `missing-genomes.20240712-bacteria.failures.csv` -- sourmash manifest of all the missing sequences that failed to download and sketch into new sourmash database
+  - `update-report.20240712-bacteria.txt` -- contains the report for the existing, missing, and updated sequences of the old sourmash database sequences
+  - `update.20240712-bacteria.failures.csv` -- sourmash manifest of all the updated sequences that failed to download and sketch into the new sourmash database
+  - `updated-versions.20240712-bacteria.csv` -- sourmash manifest of all the updated sequences for the new sourmash database
+- The `reports/` directory: This directory contains stand-alone HTML reports summarizing the database generation process.
+  - `report.20240712-bacteria.html`
+- The `workflow-cleanup` directory: This directory contains CSV files for manually checking sequences and manually downloading failed sequences (View the report files for information on how to handle these files).
+  - `manual-check.20240712-bacteria.csv`
+  - `manual-download.20240712-bacteria.csv`
+
+> [!NOTE]
+>
+> The necessary Conda environments are defined in the `envs/` directory, ensuring consistent dependencies for different workflow steps.
+
 ## Workflow Rules
 
 Rules to acquire current sourmash databases to update and genbank metadata:
