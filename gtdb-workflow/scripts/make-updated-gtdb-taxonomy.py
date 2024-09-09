@@ -74,7 +74,7 @@ def update_accessions(metadata_info, update_files):
 
             if version != gca_version:
                 print(f"Updating {accession} to version {gca_version}")
-                accession = {f"GCA{suffix}.{gca_version}"}
+                accession = f"GCA{suffix}.{gca_version}"
 
         elif prefix == "GCF":
             ref_acc = genbank_dict[suffix].get('refseq_acc')
@@ -84,7 +84,7 @@ def update_accessions(metadata_info, update_files):
 
                 if version != gcf_version:
                     print(f"Updating {accession} to version {gcf_version}")
-                    accession = {f"GCF{suffix}.{gcf_version}"}
+                    accession = f"GCF{suffix}.{gcf_version}"
 
             else:
                 # Use GCA if GCF is not in assembly summary
@@ -92,11 +92,16 @@ def update_accessions(metadata_info, update_files):
 
                 if version != gca_version:
                     print(f"Updating {accession} to version {gca_version}")
-                    accession = {f"GCA{suffix}.{gca_version}"}
+                    accession = f"GCA{suffix}.{gca_version}"
 
         return accession
 
+    # Update with the update_row() function
     metadata_info['ident'] = metadata_info.apply(update_row, axis=1)
+
+    # Drop rows with None in the 'ident' column
+    metadata_info = metadata_info.dropna(subset=['ident'])
+
     return metadata_info
 
 def main(args):

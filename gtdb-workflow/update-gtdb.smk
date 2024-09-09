@@ -44,6 +44,7 @@ rule all:
         expand("{o}/gtdb-reps-rs{r}-k{k}.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}-k{k}.clean.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}.lineages.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/gtdb-rs{r}.lineages.reps.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/gtdb-{r}.clean-existing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/gtdb-{r}.clean-missing.csv", o=OUTDIR, r=RELEASES),
         expand("{o}/data/final.gtdb-{r}.missing.csv", o=OUTDIR, r=RELEASES),
@@ -55,6 +56,7 @@ rule all:
 rule tax:
     input:
         expand("{o}/gtdb-rs{r}.lineages.csv", o=OUTDIR, r=RELEASES),
+        expand("{o}/gtdb-rs{r}.lineages.reps.csv", o=OUTDIR, r=RELEASES),
 
 rule get_metadata:
     input:
@@ -107,7 +109,7 @@ rule get_ss_db:
     params:
         o_r = OLD_RELEASES
     output:
-        dbs = temporary(f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip"),
+        dbs = temporary(f"gtdb-rs{OLD_RELEASES}-k{{k}}.abund.zip"),
     resources:
         mem_mb = lambda wildcards, attempt: 2 * 1024 * attempt,
         time = lambda wildcards, attempt: 1.5 * 60 * attempt,
@@ -118,18 +120,18 @@ rule get_ss_db:
             echo "Previous release: {params.o_r}"
 
             echo "Checking if gtdb-rs{params.o_r}-k{wildcards.k}.zip exists..."
-            if [ -e /group/ctbrowngrp/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.zip ]; then
+            if [ -e /group/ctbrowngrp/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.abund.zip ]; then
 
-                echo "gtdb-rs{params.o_r}-k{wildcards.k}.zip exists!"
+                echo "gtdb-rs{params.o_r}-k{wildcards.k}.abund.zip exists!"
                 echo "Linking existing file to $(pwd)"
 
-                ln -s /group/ctbrowngrp/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.zip $(pwd)/{output.dbs}
+                ln -s /group/ctbrowngrp/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.abund.zip $(pwd)/{output.dbs}
             else
 
-                echo "gtdb-rs{params.o_r}-k{wildcards.k}.zip does not exist!"
+                echo "gtdb-rs{params.o_r}-k{wildcards.k}.abund.zip does not exist!"
                 echo "Downloading file to $(pwd)/{output.dbs}"
 
-                curl -L https://farm.cse.ucdavis.edu/~ctbrown/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.zip > {output.dbs}
+                curl -L https://farm.cse.ucdavis.edu/~ctbrown/sourmash-db/gtdb-rs{params.o_r}/gtdb-rs{params.o_r}-k{wildcards.k}.abund.zip > {output.dbs}
             fi
    """
 
@@ -139,8 +141,8 @@ rule make_taxonomy:
         ar53_metadata='{o}/data/ar53_metadata_rs{r}.tsv',
         bac120_metadata='{o}/data/bac120_metadata_rs{r}.tsv',
     output:
-        tax_csv = '{o}/gtdb-rs{r}.lineages.csv',
-        reps_csv = '{o}/gtdb-rs{r}.lineages.reps.csv',
+        tax_csv = '{o}/data/gtdb-rs{r}.oldlineages.csv',
+        reps_csv = '{o}/data/gtdb-rs{r}.oldlineages.reps.csv',
     threads: 1
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
@@ -158,7 +160,7 @@ rule make_taxonomy:
 
 rule collect_all:
     input:
-        dbs = expand(f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip", k = KSIZES[0])
+        dbs = expand(f"gtdb-rs{OLD_RELEASES}-k{{k}}.abund.zip", k = KSIZES[0])
     output:
         db = f"{{o}}/data/collect-mf.{OLD_RELEASES}.csv",
     conda: "envs/sourmash.yaml"
@@ -175,7 +177,7 @@ rule collect_all:
 rule picklist_check:
     input:
         dbs_manifest = f"{{o}}/data/collect-mf.{OLD_RELEASES}.csv",
-        tax_picklist = '{o}/gtdb-rs{r}.lineages.csv',
+        tax_picklist = '{o}/data/gtdb-rs{r}.oldlineages.csv',
     output:
         missing = "{o}/data/gtdb-{r}.missing.csv",
         manifest = "{o}/data/gtdb-{r}.existing.csv",
@@ -288,7 +290,7 @@ rule gather_sketch_missing:
 rule extract_db:
     input:
         clean = "{o}/data/gtdb-{r}.clean-existing.csv",
-        dbs = f"gtdb-rs{OLD_RELEASES}-k{{k}}.zip",
+        dbs = f"gtdb-rs{OLD_RELEASES}-k{{k}}.abund.zip",
     output:
         dbs = temporary("{o}/gtdb-rs{r}-k{k}.clean.zip"),
     conda: "envs/sourmash.yaml",
@@ -301,6 +303,36 @@ rule extract_db:
     shell:"""
         sourmash signature cat {input.dbs} --picklist {input.clean}:name:name -k {wildcards.k} -o {output.dbs}
     """
+
+rule make_updated_taxonomy:
+    input:
+        clean = "{o}/data/gtdb-{r}.clean-existing.csv",
+        updated_existing = "{o}/gtdb-{r}.updated-versions-existing.zip",
+        updated_missing = "{o}/gtdb-{r}.all-missing-links.zip",
+        script = 'scripts/make-updated-gtdb-taxonomy.py',
+        ar53_metadata='{o}/data/ar53_metadata_rs{r}.tsv',
+        bac120_metadata='{o}/data/bac120_metadata_rs{r}.tsv',
+        assembly_summary='{o}/data/assembly_summary.bac.x.ar.txt',
+    output:
+        tax_csv = '{o}/gtdb-rs{r}.lineages.csv',
+        reps_csv = '{o}/gtdb-rs{r}.lineages.reps.csv',
+    threads: 1
+    resources:
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
+    conda:
+        "envs/sourmash.yaml",
+    shell:
+        """
+        python {input.script} --metadata-files {input.ar53_metadata} {input.bac120_metadata} \
+               --update-files {input.assembly_summary} \
+               -o {output.tax_csv} --reps-csv {output.reps_csv}
+        """
+
+
 
 rule final_db:
     input:
@@ -442,7 +474,7 @@ rule quarto_report:
     params:
         report_title = "GTDB's {r} Database Update Report",
         old_release= OLD_RELEASES,
-        old_db = lambda wildcards: ",".join([f'"gtdb-rs{OLD_RELEASES}-k{k}.zip"' for k in KSIZES]),
+        old_db = lambda wildcards: ",".join([f'"gtdb-rs{OLD_RELEASES}-k{k}.abund.zip"' for k in KSIZES]),
         new_db = lambda wildcards: ",".join([f'"{wildcards.o}/gtdb-rs{wildcards.r}-k{k}.zip"' for k in KSIZES]),
         new_reps_db = lambda wildcards: ",".join([f'"{wildcards.o}/gtdb-reps-rs{wildcards.r}-k{k}.zip"' for k in KSIZES]),
         man = "{o}/workflow-cleanup/manual-download.{r}.csv",

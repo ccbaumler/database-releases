@@ -10,7 +10,7 @@ from collections import defaultdict
 from sourmash import manifest
 import urllib.request
 from functools import lru_cache
-
+import traceback
 
 class GeneralManifestHandler:
     def __init__(self, filename):
@@ -21,9 +21,8 @@ class GeneralManifestHandler:
         with open(self.filename, 'r') as csvfile:
             csvreader = csv.DictReader(csvfile)
             for row in csvreader:
+                row['name'] = row.pop('ident', None)
                 self.rows.append(row)
-                if row['ident']:
-                    row['name'] = row.pop('ident')
 
     def find_ident_header(self):
         with open(self.filename, 'r') as fp:
@@ -83,7 +82,16 @@ def generate_urls(accession, verbose=False, base_url=False):
 
 def get_suffix(name):
     ident = name.split(' ')[0]
-    assert ident.startswith('GC')
+    try:
+        assert ident.startswith('GC')
+    except AssertionError:
+        _, _, tb = sys.exc_info()
+        traceback.print_tb(tb) # Fixed format
+        tb_info = traceback.extract_tb(tb)
+        filename, line, func, text = tb_info[-1]
+        print('An error occurred on line {} in statement {}'.format(line, text))
+        print(f'{ident}')
+        exit(1)
     return ident[3:]
 
 def get_suffix_no_version(name):
@@ -195,7 +203,11 @@ def filter_manifest(old_mf, good_idents_dict, bad_idents_dict):
     #bad_idents = set(key + '.' + value[0] for key, values in bad_idents_dict.items() for value in values)
 
     for row in old_mf.rows:
-        name = row['name']
+        
+        name = row.get('name')
+        if not name:
+            print(f"Row missing 'name': {row}")
+            continue  # Skip rows without 'name'
         mf_prefix = name.split('_')[0]
         mf_ident = get_suffix_no_version(name) # the ident number are identical for GCA and GCF
         mf_version = get_float_version(name)
