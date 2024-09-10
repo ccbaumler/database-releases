@@ -4,4 +4,4 @@ channels:
 - bioconda
 - defaults
 dependencies:
-- sourmash_plugin_branchwater==0.9.5
+- sourmash_plugin_branchwater>0.9.5,<1

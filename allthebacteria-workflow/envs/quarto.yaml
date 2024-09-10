@@ -1,20 +1,19 @@
-name: quarto-trial
+name: quarto-smk
 channels:
   - conda-forge
   - bioconda
   - defaults
 dependencies:
-  - python=3.10  # specify the Python version you prefer
   - quarto
   - pandoc
+  - python=3.10 # for python support
+  - nodejs  # for JavaScript support
   - r-base  # for R support
-  - r-essentials  # includes many useful R packages
+  - r-essentials  # useful R packages
   - jupyterlab  # for using Jupyter notebooks
   - ipykernel  # for Jupyter kernel support
-  - nodejs  # for JavaScript support in Quarto
 
   # Add any other dependencies you might need
-  - r-reticulate
   - sourmash
   - numpy
   - pandas
@@ -22,7 +21,8 @@ dependencies:
   - scipy
   - scikit-learn
 
-  # Add R packages (these will be installed via Conda)
+  # R packages installed via Conda
+  - r-reticulate # for python options in R code
   - r-tidyverse
   - r-shiny
   - r-rmarkdown
