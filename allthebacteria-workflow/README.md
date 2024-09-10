@@ -9,6 +9,7 @@ Example release:
 
 ## Executing 
 
+Note: To run the 5 sample test, simply write `test` in the `output_directory:` section of the config file. This must be run in an srun (no `--profile` works at this time).
 
 Create a list of assembly file paths at the ftp server
 ```
@@ -33,4 +34,4 @@ For release 0.2, there were `665`.
 
 Which matches `cat allthebacteria-r0.2-assembly-paths.txt | wc -l`
 
-
+For renaming purposes `find ./ -type f -name 'missing.csv' | while read file; do     if [ $(wc -l < "$file") -gt 1 ]; then         echo "$file";     fi; done` to find the missing.csv with values
