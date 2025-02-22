@@ -1,11 +1,15 @@
 ###
-# This workflow will create a genbank database for sourmash from the HPC cluster at UCDavis.
+# This workflow will create a genbanksize database for sourmash from the HPC cluster at UCDavis.
 #
 # To run:
-# snakemake -s update-genbank.smk -j 15 --use-conda --rerun-incomplete --resources allowed_jobs=100
+# snakemake -s update-genbank.smksize -j 15 --use-conda --rerun-incomplete --resources allowed_jobs=100
 #
 # On HPC, use 10 cpus and ~50gb. Request 2 days?
 ###
+
+import os
+
+NCBI_API_KEY = os.environ.get("NCBI_API_KEY")
 
 configfile: "config/update-genbank.yaml"
 
@@ -15,7 +19,7 @@ if not DATE:
     import time
     DATE = [time.strftime("%Y%m%d")]
 
-#f"/group/ctbrowngrp/sourmash-db/genbank-{DATE}"
+INDIR = config.get("input_directory")
 outdir = [
     f"{config.get('output_directory') if config.get('output_directory') is not None else '..'}/genbank-{date}"
     for date in DATE]
@@ -38,9 +42,9 @@ if email:
 OLD_DATES, = config["update_from_date"]
 
 wildcard_constraints:
-    k = "\d{2}+",
-    D = "\w[^-.]+",
-    d = "\d+",
+    ksize = "\\d{2}+",
+    dom = "\w[^-.]+",
+    d = "\\d+",
 
 # Dictionary for dynamic slurm batch allocations with correct resources
 #PART_JOBS = {1: ['low2', 1], 2: ['low2', 1], 3: ['med2', 33], 4: ['med2', 33], 5: ['high2', 100]}
@@ -50,44 +54,57 @@ PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['
 def getInputFilesForManifest(wildcards):
     files = dict()
     if config.get('output_directory') == 'test':
-        files["good"] = f"{wildcards.o}/data/sub_assembly_summary.{wildcards.D}.txt"
-        files["bad"] = f"{wildcards.o}/data/sub_assembly_summary_historical.{wildcards.D}.txt"
+        files["good"] = f"{wildcards.o}/data/sub_assembly_summary.{wildcards.dom}.txt"
+        files["bad"] = f"{wildcards.o}/data/sub_assembly_summary_historical.{wildcards.dom}.txt"
     else:
-        files["good"] = f"{wildcards.o}/data/assembly_summary.{wildcards.D}.txt"
-        files["bad"] = f"{wildcards.o}/data/assembly_summary_historical.{wildcards.D}.txt"
+        files["good"] = f"{wildcards.o}/data/assembly_summary.{wildcards.dom}.txt"
+        files["bad"] = f"{wildcards.o}/data/assembly_summary_historical.{wildcards.dom}.txt"
     return files
+
+
+#### Psuedo Rules ####
+
 
 rule all:
     input:
-        expand("{o}/genbank-{d}-{D}-k{k}.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
-        expand("{o}/lineages.{D}.csv", o=outdir, D=DOMAINS),
-        expand("{o}/report/report.{d}-{D}.html", o=outdir, d=DATE, D=DOMAINS),
+        expand("{o}/genbank-{d}-{dom}-k{ksize}.zip", o=outdir, d=DATE, dom=DOMAINS, ksize=KSIZES),
+        expand("{o}/lineages.{dom}.csv", o=outdir, dom=DOMAINS),
+        expand("{o}/report/report.{d}-{dom}.html", o=outdir, d=DATE, dom=DOMAINS),
+
+rule step_one:
+    input:
+        expand("{o}/lineages.{dom}.csv", o=outdir, dom=DOMAINS),
+
 
 rule build_genbank:
     input:
-        expand("{o}/genbank-{d}-{D}-k{k}.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
+        expand("{o}/genbank-{d}-{dom}-k{ksize}.zip", o=outdir, d=DATE, dom=DOMAINS, ksize=KSIZES),
 
 rule clean_genbank:
     input:
-        expand("{o}/genbank-{d}-{D}-k{k}.clean.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
+        expand("{o}/genbank-{d}-{dom}-k{ksize}.clean.zip", o=outdir, d=DATE, dom=DOMAINS, ksize=KSIZES),
 
 rule missing_genbank:
     input:
-        expand("{o}/genbank-{d}-{D}-k{k}.missing.zip", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
+        expand("{o}/genbank-{d}-{dom}-k{ksize}.missing.zip", o=outdir, d=DATE, dom=DOMAINS, ksize=KSIZES),
 
 rule check_genbank:
     input:
-        expand("{o}/data/genbank-{d}-{D}-k{k}.zip.check", o=outdir, d=DATE, D=DOMAINS, k=KSIZES),
+        expand("{o}/data/genbank-{d}-{dom}-k{ksize}.zip.check", o=outdir, d=DATE, dom=DOMAINS, ksize=KSIZES),
 
 rule tax_genbank:
     input:
-        expand("{o}/lineages.{D}.csv", o=outdir, D=DOMAINS),
+        expand("{o}/lineages.{dom}.csv", o=outdir, dom=DOMAINS),
+
+
+#### Target Rules ####
+
 
 rule download_assembly_summary:
     output:
-        good = '{o}/data/assembly_summary.{D}.txt',
+        good = '{o}/data/assembly_summary.{dom}.txt',
     shell: """
-        url_good="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary.txt"
+        url_good="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.dom}/assembly_summary.txt"
 
         server_status_good=$(curl -L -o /dev/null -w "%{{http_code}}" -s "$url_good")
 
@@ -101,9 +118,9 @@ rule download_assembly_summary:
 
 rule download_historical_summary:
     output:
-        bad = '{o}/data/assembly_summary_historical.{D}.txt',
+        bad = '{o}/data/assembly_summary_historical.{dom}.txt',
     shell: """
-        url_bad="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.D}/assembly_summary_historical.txt"
+        url_bad="https://ftp.ncbi.nlm.nih.gov/genomes/genbank/{wildcards.dom}/assembly_summary_historical.txt"
 
         server_status_bad=$(curl -L -o /dev/null -w "%{{http_code}}" -s "$url_bad")
 
@@ -118,55 +135,70 @@ rule download_historical_summary:
 # create a 1% sub_assembly file for testing!!!
 rule test_with_sub_assembly_summary:
     input:
-        good = '{o}/data/assembly_summary.{D}.txt',
-        bad = '{o}/data/assembly_summary_historical.{D}.txt',
+        good = '{o}/data/assembly_summary.{dom}.txt',
+        bad = '{o}/data/assembly_summary_historical.{dom}.txt',
     output:
-        good = '{o}/data/sub_assembly_summary.{D}.txt',
-        bad = '{o}/data/sub_assembly_summary_historical.{D}.txt',
+        good = '{o}/data/sub_assembly_summary.{dom}.txt',
+        bad = '{o}/data/sub_assembly_summary_historical.{dom}.txt',
     shell:"""
         echo {input.good}
         cat {input.good} | wc -l
-        awk 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.good} > {output.good}
+        awksize 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.good} > {output.good}
         cat {output.good} | wc -l
 
         echo {input.bad}
         cat {input.bad} | wc -l
-        awk 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.bad} > {output.bad}
+        awksize 'BEGIN {{srand()}} !/^$/ {{ if (rand() <= .01 || FNR<4) print $0}}' {input.bad} > {output.bad}
         cat {output.bad} | wc -l
     """
 
 rule get_ss_db:
     params:
-        old_date = OLD_DATES
+       old_date = OLD_DATES,
+       indir = INDIR
     output:
-        dbs = temporary(f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip"),
+        dbs = temporary(f"genbank-{OLD_DATES}-{{dom}}-k{{ksize}}.zip"),
     conda: "envs/sourmash.yaml"
     shell: """
             echo "Old date: {params.old_date}"
 
-            echo "Checking if genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip exists..."
-            if [ -e /group/ctbrowngrp/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip ]; then
+            echo "Checking if genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip exists..."
+            if [ -e /group/ctbrowngrp/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip ]; then
 
-                echo "genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip exists!"
+                echo "genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip exists!"
                 echo "Linking existing file to $(pwd)"
 
-                ln -s /group/ctbrowngrp/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip $(pwd)/{output.dbs}
+                ln -s /group/ctbrowngrp/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip $(pwd)/{output.dbs}
             else
 
-                echo "genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip does not exist!"
-                echo "Downloading file to $(pwd)/{output.dbs}"
+                echo "File not found in primary directory. Checking backup directory {params.indir}..."
 
-                curl -L https://farm.cse.ucdavis.edu/~ctbrown/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.D}-k{wildcards.k}.zip > {output.dbs}
+                if [ -e {params.indir}/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip ]; then
+                    echo "File found in backup directory! Linking..."
+
+                    ln -s {params.indir}/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip $(pwd)/{output.dbs}
+
+                else
+
+                    echo "File not found in backup directory. Attempting to download..."
+
+                    curl -L https://farm.cse.ucdavis.edu/~ctbrown/sourmash-db/genbank-{params.old_date}/genbank-{params.old_date}-{wildcards.dom}-k{wildcards.ksize}.zip > {output.dbs}
+
+                    if [ $? -ne 0 ]; then
+                        echo "Download failed! Exiting with error."
+                        exit 1
+                    fi
+                fi
             fi
    """
 
 rule collect_all:
     input:
-        dbs = lambda wildcards: expand(f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip", D = [wildcards.D], k = KSIZES[0])
+        dbs = lambda wildcards: expand(f"genbank-{OLD_DATES}-{{dom}}-k{{ksize}}.zip", dom = DOMAINS, ksize = KSIZES[0])
     output:
-        db = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
+        db = f"{{o}}/data/collect-mf.{OLD_DATES}-{{dom}}.csv",
     params:
-        first_k = lambda wildcards: KSIZES[0],
+        first_ksize = lambda wildcards: KSIZES[0],
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
@@ -182,12 +214,12 @@ rule cleanse_manifest:
     input:
         unpack(getInputFilesForManifest),
         script = "scripts/update_sourmash_dbs.py",
-        manifest = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
+        manifest = f"{{o}}/data/collect-mf.{OLD_DATES}-{{dom}}.csv",
     output:
-        clean = "{o}/data/mf-clean.{d}-{D}.csv",
-        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
-        report = "{o}/data/update-report.{d}-{D}.txt",
-        missing = "{o}/data/missing-genomes.{d}-{D}.csv",
+        clean = "{o}/data/mf-clean.{d}-{dom}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{dom}.csv",
+        report = "{o}/data/update-report.{d}-{dom}.txt",
+        missing = "{o}/data/missing-genomes.{d}-{dom}.csv",
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
@@ -200,11 +232,12 @@ rule cleanse_manifest:
     """
 
 rule picklist_clean_db:
+    benchmark: '{o}/benchmark/picklist_clean_db.{d}-{dom}-k{ksize}.tsv'
     input:
-        clean = "{o}/data/mf-clean.{d}-{D}.csv",
-        dbs = f"genbank-{OLD_DATES}-{{D}}-k{{k}}.zip",
+        clean = "{o}/data/mf-clean.{d}-{dom}.csv",
+        dbs = f"genbank-{OLD_DATES}-{{dom}}-k{{ksize}}.zip",
     output:
-        woohoo = temporary("{o}/genbank-{d}-{D}-k{k}.clean.zip"),
+        woohoo = temporary("{o}/genbank-{d}-{dom}-k{ksize}.clean.zip"),
     conda: "envs/sourmash.yaml",
     params:
         old_date = OLD_DATES
@@ -214,48 +247,48 @@ rule picklist_clean_db:
         runtime = lambda wildcards, attempt: 12 * 60 * attempt,
         allowed_jobs=10,
         partition="bmh",
-    benchmark:
-        'benchmarks/picklist_clean_db.{o}-{d}-{D}-k{k}.tsv'
     shell:'''
         echo "Cleaning {input.dbs}..."
-        sourmash sig cat {input.dbs} --picklist {input.clean}:name:name -k {wildcards.k} -o {output.woohoo}
+        sourmash sig cat {input.dbs} --picklist {input.clean}:name:name -ksize {wildcards.ksize} -o {output.woohoo}
         echo "{input.dbs} cleaned and stored as {output.woohoo}"
     '''
 
 rule gather_sketch_reversioned:
+    benchmark: '{o}/benchmark/gather_sketch_reversioned.{d}-{dom}.tsv'
     input:
-        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{dom}.csv",
     output:
-        failed = "{o}/data/update.{d}-{D}.failures.csv",
-        db = temporary("{o}/genbank-{d}-{D}.rever.zip"),
+        failed = "{o}/data/update.{d}-{dom}.failures.csv",
+        db = temporary("{o}/genbank-{d}-{dom}.rever.zip"),
     conda: "envs/directsketch.yaml"
-    benchmark:
-        'benchmarks/gather_sketch_reversioned.{o}-{d}-{D}.tsv'
-    threads: 3
+    threads: 32
     resources:
         mem_mb = 100 * 1024,
         time = lambda wildcards, attempt: 12 * 60 * attempt,
         runtime = lambda wildcards, attempt: 12 * 60 * attempt,
-        allowed_jobs=100,
+        allowed_jobs=50,
         partition="bmh",
     params:
-        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
-        #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
+        k_list = lambda wildcards: ",".join([f"ksize={ksize}" for ksize in KSIZES]),
+        #k_list = lambda wildcards: f"ksize={','.join([f'{ksize}' for ksize in KSIZES])}",
         scale = config.get('scale_value'),
+        api_key = NCBI_API_KEY,
+        threads = lambda wildcards: int(10 if NCBI_API_KEY and NCBI_API_KEY.strip() else 3)
     log:
-        "logs/gather_sketch_reversioned.{o}_{d}_{D}.log"
+        "logs/gather_sketch_reversioned.{o}_{d}_{dom}.log"
     shell:'''
         sourmash scripts gbsketch {input.reversion} -o {output.db} --failed {output.failed} \
-            --param-string "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {log}
+            --param-string "dna,{params.k_list},scaled={params.scale},abund" \
+            -a '{params.api_key}' -r 10 -n {params.threads} -g 2> {log}
     '''
 
 rule cat_to_clean_reversioned:
     input:
-        dir = "{o}/genbank-{d}-{D}.rever.zip",
-        db = "{o}/genbank-{d}-{D}-k{k}.clean.zip",
-        missing = "{o}/data/update.{d}-{D}.failures.csv",
+        dir = "{o}/genbank-{d}-{dom}.rever.zip",
+        db = "{o}/genbank-{d}-{dom}-k{ksize}.clean.zip",
+        missing = "{o}/data/update.{d}-{dom}.failures.csv",
     output:
-        woohoo = temporary("{o}/genbank-{d}-{D}-k{k}.update.zip"),
+        woohoo = temporary("{o}/genbank-{d}-{dom}-k{ksize}.update.zip"),
     conda: "envs/sourmash.yaml"
     resources:
         mem_mb = lambda wildcards, attempt: 16 * 1024 * attempt,
@@ -263,44 +296,45 @@ rule cat_to_clean_reversioned:
         runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
         allowed_jobs=100,
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
-    benchmark:
-        'benchmarks/cat_to_clean_reversioned.{o}-{d}-{D}-k{k}.tsv'
     shell: """
-        sourmash sig cat {input.dir} {input.db} -k {wildcards.k} -o {output.woohoo}
+        sourmash sig cat {input.dir} {input.db} -ksize {wildcards.ksize} -o {output.woohoo}
     """
 
 rule gather_sketch_missing:
+    benchmark: '{o}/benchmark/gather_sketch_missing.{d}-{dom}.tsv'
     input:
-         missing = "{o}/data/missing-genomes.{d}-{D}.csv",
+         missing = "{o}/data/missing-genomes.{d}-{dom}.csv",
     output:
-        failed = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
-        db = temporary("{o}/genbank-{d}-{D}.miss.zip"),
+        failed = "{o}/data/missing-genomes.{d}-{dom}.failures.csv",
+        db = temporary("{o}/genbank-{d}-{dom}.miss.zip"),
     conda: "envs/directsketch.yaml"
     resources:
-        mem_mb = 100 * 1024,
+        mem_mb = 128 * 1024,
         time = lambda wildcards, attempt: 10 * 24 * 60 * attempt,
         runtime = lambda wildcards, attempt: 10 * 24 * 60 * attempt,
-        allowed_jobs=100,
+        allowed_jobs=50,
         partition="bmh",
-    threads: 3
+    threads: 32
     params:
-        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
-        #k_list = lambda wildcards: f"k={','.join([f'{k}' for k in KSIZES])}",
+        k_list = lambda wildcards: ",".join([f"ksize={ksize}" for ksize in KSIZES]),
+        #k_list = lambda wildcards: f"ksize={','.join([f'{ksize}' for ksize in KSIZES])}",
         scale = config.get('scale_value'),
-        log = "logs/gather_sketch_missing.{d}_{D}.log"
+        log = "logs/gather_sketch_missing.{d}_{dom}.log",
+        api_key = NCBI_API_KEY,
+        threads = lambda wildcards: int(10 if NCBI_API_KEY and NCBI_API_KEY.strip() else 3)
     shell:'''
         sourmash scripts gbsketch {input.missing} -o {output.db} --failed {output.failed} \
-            --param-str "dna,{params.k_list},scaled={params.scale},abund" -r 5 -g 2> {params.log}
+            --param-str "dna,{params.k_list},scaled={params.scale},abund" \
+            -a '{params.api_key}' -r 10 -n {params.threads} -g 2> {params.log}
     '''
 
-# Could this be changed to `sourmash sig check` instead?
-checkpoint cat_to_clean_missing:
+rule cat_to_clean_missing:
     input:
-        rever = "{o}/genbank-{d}-{D}.rever.zip",
-        miss = "{o}/genbank-{d}-{D}.miss.zip",
-        db = "{o}/genbank-{d}-{D}-k{k}.clean.zip",
+        rever = "{o}/genbank-{d}-{dom}.rever.zip",
+        miss = "{o}/genbank-{d}-{dom}.miss.zip",
+        clean = "{o}/genbank-{d}-{dom}-k{ksize}.clean.zip",
     output:
-        woohoo = protected("{o}/genbank-{d}-{D}-k{k}.zip"),
+        woohoo = "{o}/genbank-{d}-{dom}-k{ksize}.zip",
     conda: "envs/sourmash.yaml"
     resources:
         mem_mb = lambda wildcards, attempt: 24 * 1024 * attempt,
@@ -309,16 +343,16 @@ checkpoint cat_to_clean_missing:
         allowed_jobs=100,
         partition="bmm",
     shell: """
-        sourmash sig cat {input.miss} {input.rever} {input.db} -k {wildcards.k} -o {output.woohoo}
+        sourmash sig cat {input.miss} {input.rever} {input.clean} -ksize {wildcards.ksize} -o {output.woohoo}
     """
 
 rule collect_complete:
     input:
-        dbs = lambda wildcards: expand("{o}/genbank-{d}-{D}-k{k}.zip", o = [wildcards.o], d = [wildcards.d], D = [wildcards.D], k = KSIZES[0])
+        dbs = f"{{o}}/genbank-{{d}}-{{dom}}-k21.zip",
     output:
-        db = "{o}/data/collect-mf.{d}-{D}.csv",
+        db = f"{{o}}/data/collect-mf.{{d}}-{{dom}}.csv",
     params:
-        first_k = lambda wildcards: KSIZES[0],
+        first_ksize = lambda wildcards: KSIZES[0],
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
@@ -332,14 +366,14 @@ rule collect_complete:
 
 rule picklist_check:
     input:
-        dbs_manifest = "{o}/data/collect-mf.{d}-{D}.csv",
-        tax_picklist = '{o}/lineages.{D}.csv',
+        dbs_manifest = "{o}/data/collect-mf.{d}-{dom}.csv",
+        tax_picklist = '{o}/lineages.{dom}.csv',
     output:
-        missing = "{o}/data/genbank-{d}-{D}.missing.csv",
-        manifest = "{o}/data/genbank-{d}-{D}.existing.csv",
+        missing = "{o}/data/genbank-{d}-{dom}.missing.csv",
+        manifest = "{o}/data/genbank-{d}-{dom}.existing.csv",
     params:
-        log = "logs/genbank-{d}-{D}.picklist_check.log",
-        first_k = lambda wildcards: KSIZES[0],
+        log = "logs/genbank-{d}-{dom}.picklist_check.log",
+        first_ksize = lambda wildcards: KSIZES[0],
     conda: "envs/sourmash.yaml"
     threads: 1
     resources:
@@ -348,7 +382,7 @@ rule picklist_check:
         partition='high2',
     shell:
         """
-        sourmash sig check -k {params.first_k} \
+        sourmash sig checksize -ksize {params.first_k} \
             --picklist {input.tax_picklist}:ident:ident \
             {input.dbs_manifest} --output-missing {output.missing} \
             --save-manifest {output.manifest} 2> {params.log}
@@ -358,15 +392,15 @@ rule picklist_check:
 rule make_manual_files:
     input:
         script = "scripts/gather_failed.sh",
-        missing = "{o}/data/missing-genomes.{d}-{D}.csv",
-        reversion = "{o}/data/updated-versions.{d}-{D}.csv",
-        check = "{o}/data/genbank-{d}-{D}.missing.csv",
+        missing = "{o}/data/missing-genomes.{d}-{dom}.csv",
+        reversion = "{o}/data/updated-versions.{d}-{dom}.csv",
+        checksize = "{o}/data/genbank-{d}-{dom}.missing.csv",
     output:
-        output = "{o}/workflow-cleanup/manual-download.{d}-{D}.csv",
-        manual = "{o}/workflow-cleanup/manual-check.{d}-{D}.csv",
-        log = "{o}/workflow-cleanup/log.{d}-{D}.txt",
+        output = "{o}/workflow-cleanup/manual-download.{d}-{dom}.csv",
+        manual = "{o}/workflow-cleanup/manual-check.{d}-{dom}.csv",
+        log = "{o}/workflow-cleanup/log.{d}-{dom}.txt",
     shell:"""
-        {input.script} {wildcards.o} {wildcards.d} {wildcards.D} 2>&1 | tee {output.log}
+        {input.script} {wildcards.o} {wildcards.d} {wildcards.dom} 2>&1 | tee {output.log}
     """
 
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
@@ -391,17 +425,15 @@ rule download_taxdump: # may need to restart this a couple times
 
 rule make_lineage_csv:
     input:
-        "{o}/data/assembly_summary.{D}.txt",
+        "{o}/data/assembly_summary.{dom}.txt",
         "taxdump/nodes.dmp",
         "taxdump/names.dmp",
         "scripts/make-lineage-csv.py",
         "scripts/ncbi_taxdump_utils.py",
     output:
-        "{o}/lineages.{D}.csv"
+        "{o}/lineages.{dom}.csv"
     params:
         ictv_cmd = lambda w: " --ictv " if 'viral' in w.D else '',
-    benchmark:
-        'benchmarks/make_lineage_csv.{o}-{D}.tsv'
     shell:
         "python scripts/make-lineage-csv.py taxdump/{{nodes.dmp,names.dmp}} {input[0]} -o {output} {params.ictv_cmd}"
 
@@ -410,28 +442,28 @@ rule make_lineage_csv:
 rule quarto_report:
     input:
         unpack(getInputFilesForManifest),
-        report = "{o}/data/update-report.{d}-{D}.txt",
-        new_mf = "{o}/data/collect-mf.{d}-{D}.csv",
-        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{D}}.csv",
-        failures = "{o}/data/missing-genomes.{d}-{D}.failures.csv",
-        missing = "{o}/data/genbank-{d}-{D}.missing.csv",
-        gathered = "{o}/data/genbank-{d}-{D}.existing.csv",
-        lineage = "{o}/lineages.{D}.csv",
-        recovered = "{o}/workflow-cleanup/log.{d}-{D}.txt",
+        report = "{o}/data/update-report.{d}-{dom}.txt",
+        new_mf = f"{{o}}/data/collect-mf.{DATE}-{{dom}}.csv",
+        old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{dom}}.csv",
+        failures = "{o}/data/missing-genomes.{d}-{dom}.failures.csv",
+        missing = "{o}/data/genbank-{d}-{dom}.missing.csv",
+        gathered = "{o}/data/genbank-{d}-{dom}.existing.csv",
+        lineage = "{o}/lineages.{dom}.csv",
+        recovered = "{o}/workflow-cleanup/log.{d}-{dom}.txt",
     output:
-        "{o}/report/report.{d}-{D}.html",
+        "{o}/report/report.{d}-{dom}.html",
     params:
-        log = "logs/{d}_{D}_report.log",
-        report_title = "Genbank's {D} Database Update Report",
+        log = "logs/{d}_{dom}_report.log",
+        report_title = "Genbank's {dom} Database Update Report",
         old_date = OLD_DATES,
-        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
-        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.D}-k{k}.zip"' for k in KSIZES]),
-        man = "{o}/workflow-cleanup/manual-download.{d}-{D}.csv",
-        man_check = "{o}/workflow-cleanup/manual-check.{d}-{D}.csv",
-        man_out = "{o}/workflow-cleanup/manual-download.{d}-{D}.zip",
-        man_fail = "{o}/workflow-cleanup/manual-download.{d}-{D}.failed.csv",
-        man_log = "{o}/workflow-cleanup/manual-download.{d}-{D}.log",
-        k_list = lambda wildcards: ",".join([f"k={k}" for k in KSIZES]),
+        old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.dom}-k{ksize}.zip"' for ksize in KSIZES]),
+        new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.dom}-k{ksize}.zip"' for ksize in KSIZES]),
+        man = "{o}/workflow-cleanup/manual-download.{d}-{dom}.csv",
+        man_checksize = "{o}/workflow-cleanup/manual-check.{d}-{dom}.csv",
+        man_out = "{o}/workflow-cleanup/manual-download.{d}-{dom}.zip",
+        man_fail = "{o}/workflow-cleanup/manual-download.{d}-{dom}.failed.csv",
+        man_log = "{o}/workflow-cleanup/manual-download.{d}-{dom}.log",
+        k_list = lambda wildcards: ",".join([f"ksize={ksize}" for ksize in KSIZES]),
         scale = config.get('scale_value'),
     conda: "envs/quarto.yaml",
     resources:
@@ -445,9 +477,9 @@ rule quarto_report:
         # Mimicing https://github.com/ETH-NEXUS/quarto_example/blob/main/workflow/rules/clean_data_report.smk
         # This will be a stand-alone html document and needs to embed-resources
         # https://quarto.org/docs/output-formats/html-publishing.html#standalone-html
-        mkdir -p {wildcards.d}-{wildcards.D}.temp
-        cp scripts/report.qmd {wildcards.d}-{wildcards.D}.temp/
-        cd {wildcards.d}-{wildcards.D}.temp/
+        mkdir -p {wildcards.d}-{wildcards.dom}.temp
+        cp scripts/report.qmd {wildcards.d}-{wildcards.dom}.temp/
+        cd {wildcards.d}-{wildcards.dom}.temp/
 
         DIRNAME=$(dirname "{output}")
 
@@ -472,5 +504,5 @@ rule quarto_report:
 
         mv report.html {output}
         cd ..
-        rm -rf {wildcards.d}-{wildcards.D}.temp
+        rm -rf {wildcards.d}-{wildcards.dom}.temp
         """
