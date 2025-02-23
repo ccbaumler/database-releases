@@ -27,7 +27,7 @@ outdir = [
 DOMAINS = config.get('domains')
 
 KSIZES = config.get('k_values')
-
+print(KSIZES)
 email = config.get('email')
 
 if email:
@@ -60,6 +60,25 @@ def getInputFilesForManifest(wildcards):
         files["good"] = f"{wildcards.o}/data/assembly_summary.{wildcards.dom}.txt"
         files["bad"] = f"{wildcards.o}/data/assembly_summary_historical.{wildcards.dom}.txt"
     return files
+
+# Create a file dictionary for normal and test runs for rule cheat_mainfest
+def createOldSingleManifest(wildcards):
+    file = dict()
+
+    first_ksize = KSIZES[0] if isinstance(KSIZES, (list, tuple)) else KSIZES
+
+    file["original_dbs"] = f"genbank-{OLD_DATES}-{wildcards.dom}-k{first_ksize}.zip"
+
+    return file
+
+def createNewSingleManifest(wildcards):
+    file = dict()
+
+    first_ksize = KSIZES[0] if isinstance(KSIZES, (list, tuple)) else KSIZES
+
+    file["new_dbs"] = f"{wildcards.o}/genbank-{wildcards.d}-{wildcards.dom}-k{first_ksize}.zip"
+
+    return file
 
 
 #### Psuedo Rules ####
@@ -194,11 +213,9 @@ rule get_ss_db:
 
 rule collect_all:
     input:
-        dbs = lambda wildcards: expand(f"genbank-{OLD_DATES}-{{dom}}-k{{ksize}}.zip", dom = DOMAINS, ksize = KSIZES[0])
+        unpack(createOldSingleManifest), #unpack(createSingleManifest)[0], #unpack the first of the keys i.e. original_dbs
     output:
         db = f"{{o}}/data/collect-mf.{OLD_DATES}-{{dom}}.csv",
-    params:
-        first_ksize = lambda wildcards: KSIZES[0],
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
@@ -207,7 +224,7 @@ rule collect_all:
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
-        sourmash sig manifest --no-rebuild {input.dbs} -o {output.db}
+        sourmash sig manifest --no-rebuild {input.original_dbs} -o {output.db}
     """
 
 rule cleanse_manifest:
@@ -348,11 +365,9 @@ rule cat_to_clean_missing:
 
 rule collect_complete:
     input:
-        dbs = f"{{o}}/genbank-{{d}}-{{dom}}-k21.zip",
+        unpack(createNewSingleManifest), #unpack the second manifest i.e. new_dbs
     output:
         db = f"{{o}}/data/collect-mf.{{d}}-{{dom}}.csv",
-    params:
-        first_ksize = lambda wildcards: KSIZES[0],
     conda: "envs/sourmash.yaml",
     resources:
         mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
@@ -361,7 +376,7 @@ rule collect_complete:
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell: """
-        sourmash sig manifest --no-rebuild {input.dbs} -o {output.db}
+        sourmash sig manifest --no-rebuild {input} -o {output.db}
     """
 
 rule picklist_check:
@@ -382,7 +397,7 @@ rule picklist_check:
         partition='high2',
     shell:
         """
-        sourmash sig checksize -ksize {params.first_k} \
+        sourmash sig checksize -ksize {params.first_ksize} \
             --picklist {input.tax_picklist}:ident:ident \
             {input.dbs_manifest} --output-missing {output.missing} \
             --save-manifest {output.manifest} 2> {params.log}
@@ -433,7 +448,7 @@ rule make_lineage_csv:
     output:
         "{o}/lineages.{dom}.csv"
     params:
-        ictv_cmd = lambda w: " --ictv " if 'viral' in w.D else '',
+        ictv_cmd = lambda w: " --ictv " if 'viral' in w.dom else '',
     shell:
         "python scripts/make-lineage-csv.py taxdump/{{nodes.dmp,names.dmp}} {input[0]} -o {output} {params.ictv_cmd}"
 
@@ -443,7 +458,9 @@ rule quarto_report:
     input:
         unpack(getInputFilesForManifest),
         report = "{o}/data/update-report.{d}-{dom}.txt",
-        new_mf = f"{{o}}/data/collect-mf.{DATE}-{{dom}}.csv",
+        #new_mf = f"{{o}}/data/collect-mf.{d}-{{dom}}.csv",
+        #new_mf = f"{{o}}/data/collect-mf.{str(DATE)}-{{dom}}.csv",
+        new_mf = "{o}/data/collect-mf.{d}-{dom}.csv",
         old_mf = f"{{o}}/data/collect-mf.{OLD_DATES}-{{dom}}.csv",
         failures = "{o}/data/missing-genomes.{d}-{dom}.failures.csv",
         missing = "{o}/data/genbank-{d}-{dom}.missing.csv",
@@ -459,7 +476,7 @@ rule quarto_report:
         old_db = lambda wildcards: ",".join([f'"genbank-{OLD_DATES}-{wildcards.dom}-k{ksize}.zip"' for ksize in KSIZES]),
         new_db = lambda wildcards: ",".join([f'"{wildcards.o}/genbank-{wildcards.d}-{wildcards.dom}-k{ksize}.zip"' for ksize in KSIZES]),
         man = "{o}/workflow-cleanup/manual-download.{d}-{dom}.csv",
-        man_checksize = "{o}/workflow-cleanup/manual-check.{d}-{dom}.csv",
+        man_check = "{o}/workflow-cleanup/manual-check.{d}-{dom}.csv",
         man_out = "{o}/workflow-cleanup/manual-download.{d}-{dom}.zip",
         man_fail = "{o}/workflow-cleanup/manual-download.{d}-{dom}.failed.csv",
         man_log = "{o}/workflow-cleanup/manual-download.{d}-{dom}.log",
