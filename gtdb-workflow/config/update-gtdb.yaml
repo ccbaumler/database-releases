@@ -17,10 +17,10 @@ email: 'ccbaumler@ucdavis.edu'
 #  - 202405030
 
 update_to_release:
-  - 220
+  - 226
 
 update_from_release:
-  - 214
+  - 220
 
 # Default release version is 0
 # GTDB infrequently releases a
@@ -68,3 +68,23 @@ k_values:
 #scale_value: 1000
 
 scale_value: 1000
+
+# The batch size for downloading genomes
+# from NCBI. This allows the download to
+# be resumed, if interrupted. 
+
+# `1000` seems to be a good standard. 
+
+batch_size: 1000
+
+# The lineage ranks for the pangenome
+# databases for sourmash to generate.
+# This pangenome database will be
+# created from the cleaned and updated
+# version of the existing database.
+
+# Species, genus, and family 
+
+lineage_rank:
+  - 'species'
+  - 'genus'
