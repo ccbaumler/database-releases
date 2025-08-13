@@ -49,12 +49,35 @@ def main():
             count += 1
 
             acc = row[0]
-            taxid = row[5]
-            taxid = int(taxid)
 
+#            taxid = row[5]
+#            taxid = int(taxid)
+#
+#            lin_dict = taxfoo.get_lineage_as_dict(taxid, want_taxonomy)
+#            if not lin_dict:
+#                print(f"WARNING: taxid {taxid} not in taxdump files. Producing empty lineage.")
+
+            original_taxid = row[5]
+            try:
+                taxid = int(original_taxid)
+            except ValueError:
+                print(f"WARNING: invalid taxid '{original_taxid}' in row: {row}")
+                continue
+            
             lin_dict = taxfoo.get_lineage_as_dict(taxid, want_taxonomy)
-            if not lin_dict:
-                print(f"WARNING: taxid {taxid} not in taxdump files. Producing empty lineage.")
+            
+            if not lin_dict or not lin_dict.get('species'):
+                # fallback using organism_name and infraspecific_name
+                organism_name = row[7]
+                infraspecific_name = row[8] if len(row) > 8 and row[8].lower() != 'na' else None
+            
+                fallback_taxid = taxfoo.get_taxid_from_organism_names(organism_name, infraspecific_name)
+                if fallback_taxid:
+                    print(f"INFO: fallback succeeded for {acc}: {organism_name} ({infraspecific_name}) -> taxid {fallback_taxid}")
+                    taxid = fallback_taxid
+                    lin_dict = taxfoo.get_lineage_as_dict(taxid, want_taxonomy)
+                else:
+                    print(f"WARNING: taxid {original_taxid} not found and fallback failed for organism '{organism_name}'.")
 
             row = [acc, taxid]
             for rank in want_taxonomy:

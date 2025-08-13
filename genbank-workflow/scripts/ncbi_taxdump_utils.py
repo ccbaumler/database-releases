@@ -79,6 +79,34 @@ class NCBI_TaxonomyFoo(object):
         taxid = int(taxid)
         return taxid
 
+    def get_taxid_from_organism_names(self, organism_name, infraspecific_name=None):
+        """
+        Attempt to find taxid by checking if both organism_name and infraspecific_name
+        are substrings of any name in names.dmp. Returns the first matching taxid or None.
+        """
+        name_query = organism_name.strip().lower()
+        if infraspecific_name and '=' in infraspecific_name:
+            infraspecific_name = infraspecific_name.split('=')[1].strip()
+        infraspecific_query = infraspecific_name.strip().lower() if infraspecific_name else None
+        print(f"Trying fallback search for organism_name='{name_query}', infraspecific_name='{infraspecific_query}'")
+
+        for taxid, names_list in self.taxid_to_names.items():
+            # names can be a single tuple or a list of tuples, depending on parse_names
+            if isinstance(names_list, tuple):
+                names_list = [names_list]
+
+            for name_entry in names_list:
+                name_str = name_entry[0].strip().lower()
+
+                if name_query in name_str:
+                    if infraspecific_query:
+                        if infraspecific_query in name_str:
+                            return taxid
+                    else:
+                        return taxid
+
+        return None
+
     # code to find the last common ancestor from a set of taxids
     def find_lca(self, taxid_set):
         # empty? exit.
@@ -288,7 +316,8 @@ def parse_names(filename):
     """
     Parse an NCBI names.dmp file.
     """
-    taxid_to_names = dict()
+#    taxid_to_names = dict()
+    taxid_to_names = collections.defaultdict(list)
     with xopen(filename, 'rt') as fp:
         for n, line in enumerate(fp):
             line = line.rstrip('\t|\n')
@@ -297,8 +326,9 @@ def parse_names(filename):
             taxid, name, uniqname, name_class = x
             taxid = int(taxid)
 
-            if name_class == 'scientific name':
-                taxid_to_names[taxid] = (name, uniqname, name_class)
+#            if name_class == 'scientific name':
+#                taxid_to_names[taxid] = (name, uniqname, name_class)
+            taxid_to_names[taxid].append((name, uniqname, name_class))
 
     return taxid_to_names
 
