@@ -7,7 +7,7 @@ import csv
 import os
 from pickle import dump, load
 import collections
-
+from difflib import get_close_matches
 
 names_mem_cache = {}
 nodes_mem_cache = {}
@@ -326,10 +326,9 @@ def parse_names(filename):
             taxid, name, uniqname, name_class = x
             taxid = int(taxid)
 
-#            if name_class == 'scientific name':
-#                taxid_to_names[taxid] = (name, uniqname, name_class)
-            taxid_to_names[taxid].append((name, uniqname, name_class))
-
+            if name_class in ('scientific name','includes'):
+                taxid_to_names[taxid] = (name, uniqname, name_class)
+#                taxid_to_names[taxid].append((name, uniqname, name_class))
     return taxid_to_names
 
 
