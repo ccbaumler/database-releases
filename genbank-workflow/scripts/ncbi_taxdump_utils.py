@@ -7,7 +7,6 @@ import csv
 import os
 from pickle import dump, load
 import collections
-from difflib import get_close_matches
 
 names_mem_cache = {}
 nodes_mem_cache = {}
@@ -97,13 +96,13 @@ class NCBI_TaxonomyFoo(object):
 
             for name_entry in names_list:
                 name_str = name_entry[0].strip().lower()
-
-                if name_query in name_str:
-                    if infraspecific_query:
-                        if infraspecific_query in name_str:
-                            return taxid
-                    else:
-                        return taxid
+        #        print(f"Comparing: name_query='{name_query}' in name_str='{name_str}'")
+                if normalize(name_query) in normalize(name_str):
+        #            if infraspecific_query:
+        #                if infraspecific_query in name_str:
+        #                    return taxid
+        #            else:
+                    return taxid
 
         return None
 
@@ -149,8 +148,14 @@ class NCBI_TaxonomyFoo(object):
         if taxid not in self.node_to_info:
             return None
 
-        name = self.taxid_to_names[taxid][0]
-        return name
+        name_entry = self.taxid_to_names.get(taxid, None)
+        if name_entry is None:
+            return 'unknown'
+        if isinstance(name_entry, list):
+            name_tuple = name_entry[0]
+        else:
+            name_tuple = name_entry
+        return name_tuple[0]
 
     def get_taxid_rank(self, taxid):
         if taxid not in self.node_to_info:
@@ -326,9 +331,9 @@ def parse_names(filename):
             taxid, name, uniqname, name_class = x
             taxid = int(taxid)
 
-            if name_class in ('scientific name','includes'):
-                taxid_to_names[taxid] = (name, uniqname, name_class)
-#                taxid_to_names[taxid].append((name, uniqname, name_class))
+            if name_class in ('scientific name','includes','synonym'):
+#                taxid_to_names[taxid] = (name, uniqname, name_class)
+                taxid_to_names[taxid].append((name, uniqname, name_class))
     return taxid_to_names
 
 
@@ -348,3 +353,7 @@ def load_genbank_accessions_csv(filename):
             accessions[acc] = row
 
     return accessions
+
+import unicodedata
+def normalize(s):
+    return ''.join(filter(str.isalnum, unicodedata.normalize('NFKC', s).encode('ascii', 'ignore').decode('ascii').strip().lower()))
