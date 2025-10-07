@@ -448,8 +448,8 @@ rule pangenome_merge_database:
         merge = "{o}/genbank-{d}-{dom}-k{ksize}.merged.zip",
     conda: "envs/pangenome.yaml"
     resources:
-        mem_mb = lambda wildcards, attempt: 96 * 1024, # * attempt,
-        disk_mb = lambda wildcards, attempt: 96 * 1024, # * attempt,
+        mem_mb = lambda wildcards, attempt: 192 * 1024, # * attempt,
+        disk_mb = lambda wildcards, attempt: 192 * 1024, # * attempt,
         time = lambda wildcards, attempt: 8 * 60 * attempt,
         runtime = lambda wildcards, attempt: 8 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
@@ -523,31 +523,40 @@ rule make_manual_files:
 rule download_ncbi_utils:
     output: "scripts/ncbi_taxdump_utils.py"
     shell:
-        "curl -L https://raw.githubusercontent.com/ctb/2022-assembly-summary-to-lineages/main/ncbi_taxdump_utils.py > {output}"
+        "curl -L https://raw.githubusercontent.com/ccbaumler/database-releases/refs/heads/wort-removal/genbank-workflow/scripts/ncbi_taxdump_utils.py > {output}"
 
 rule download_taxscript:
-    output: "scripts/make-lineage-csv.py"
+    output: "scripts/make-lineage-csv-better.py"
     shell:
-        "curl -L https://raw.githubusercontent.com/bluegenes/2022-assembly-summary-to-lineages/virus-tax/make-lineage-csv.py > {output}"
+        "curl -L https://raw.githubusercontent.com/ccbaumler/database-releases/refs/heads/wort-removal/genbank-workflow/scripts/make-lineage-csv-better.py > {output}"
 
 rule download_taxdump: # may need to restart this a couple times
     output:
-        temp(directory("{o}/taxdump")),
-    shell:
-        "curl -L ftp://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz | (mkdir -p taxdump && cd taxdump && tar xzvf -)"
+        directory("{o}/taxdump"),
+    shell:"""
+        mkdir -p {output}
+        curl -L ftp://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz | tar xzvf - -C {output}
+    """
 
 rule make_lineage_csv:
     input:
         "{o}/data/assembly_summary.{dom}.txt",
         "{o}/taxdump",
-        "scripts/make-lineage-csv.py",
+        "scripts/make-lineage-csv-better.py",
         "scripts/ncbi_taxdump_utils.py",
     output:
         "{o}/lineages.{dom}.csv"
     params:
         ictv_cmd = lambda w: " --ictv " if 'viral' in w.dom else '',
+    resources:
+        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        disk_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
+        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
+        partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell:
-        "python scripts/make-lineage-csv.py {wildcards.o}/taxdump/{{nodes.dmp,names.dmp}} {input[0]} -o {output} {params.ictv_cmd}"
+        "python scripts/make-lineage-csv-better.py {wildcards.o}/taxdump/{{nodes.dmp,names.dmp}} {input[0]} -o {output} {params.ictv_cmd}"
 
 ### create a report with sourmash sig summarize for the databases... and sourmash compare(?)
 
@@ -579,9 +588,10 @@ rule quarto_report:
         scale = config.get('scale_value'),
     conda: "envs/quarto.yaml",
     resources:
-        mem_mb = lambda wildcards, attempt: 8 * 1024 * attempt,
-        time = lambda wildcards, attempt: 1.5 * 60 * attempt,
-        runtime = lambda wildcards, attempt: 1.5 * 60 * attempt,
+        mem_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
+        disk_mb = lambda wildcards, attempt: 32 * 1024 * attempt,
+        time = lambda wildcards, attempt: 3 * 60 * attempt,
+        runtime = lambda wildcards, attempt: 3 * 60 * attempt,
         allowed_jobs=lambda wildcards, attempt: PART_JOBS[attempt][1],
         partition=lambda wildcards, attempt: PART_JOBS[attempt][0],
     shell:
