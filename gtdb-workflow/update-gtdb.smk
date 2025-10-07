@@ -19,8 +19,9 @@ OLD_RELEASES, = config["update_from_release"]
 VERSION = 0 if config.get("release_version") is None else config.get("release_version")
 
 OUTDIR = [
-    f"{config.get('output_directory') if config.get('output_directory') is not None else '..'}/gtdb-rs{release}"
-    for release in RELEASES]
+    f"""{config.get('output_directory', '..')}/gtdb-rs{release}{f'-{config.get("date")}' if config.get('date') else ''}"""
+    for release in RELEASES
+]
 
 KSIZES = config.get('k_values')
 EMAIL = config.get('email')
@@ -70,7 +71,7 @@ if config.get('batch_size'):
 PART_JOBS = {1: ['bml', 1], 2: ['bml', 1], 3: ['bmm', 33], 4: ['bmm', 33], 5: ['bmh', 100]}
 
 wildcard_constraints:
-    o = "|".join([f"{config.get('output_directory', '..')}/gtdb-rs{r}" for r in RELEASES]),
+    o = "|".join([f"""{config.get('output_directory', '..')}/gtdb-rs{r}{f'-{config.get("date")}' if config.get('date') else ''}""" for r in RELEASES]),
     k = "\d{2}",
     r = "\\d+",
     OR = "\\w[^-.]+",
@@ -93,7 +94,6 @@ rule all:
         expand("{o}/data/ranktable.gtdb-rs{r}-k{k}.species.log", o=OUTDIR, r=RELEASES, k=KSIZES),
         expand("{o}/gtdb-rs{r}-k{k}.{rank}.zip", o=OUTDIR, r=RELEASES, k=KSIZES, rank=RANKS),
         expand("{o}/gtdb-rs{r}-k{k}.merged.zip", o=OUTDIR, r=RELEASES, k=KSIZES),
-
 
 rule tax:
     input:

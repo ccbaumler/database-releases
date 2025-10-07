@@ -12,9 +12,7 @@ email: 'ccbaumler@ucdavis.edu'
 # E.g. "2022.03"
 
 # example =
-#date:
-#  - 20220315
-#  - 202405030
+date: "08062025"
 
 update_to_release:
   - 226
@@ -43,7 +41,7 @@ release_version:
 
 # examples = output_directory: 'elsewhere'
 
-output_directory: '/group/ctbrowngrp4/2024-ccbaumler-gtdb'
+output_directory: '/group/ctbrowngrp/sourmash-db'
 
 # The sourmash kmer size you
 # would like to sketch as your
