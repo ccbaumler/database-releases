@@ -73,11 +73,11 @@ def main():
             
                 fallback_taxid = taxfoo.get_taxid_from_organism_names(organism_name, infraspecific_name)
                 if fallback_taxid:
-                    print(f"INFO: fallback succeeded for {acc}: {organism_name} ({infraspecific_name}) -> taxid {fallback_taxid}")
+                    print(f"    INFO: fallback succeeded for {acc}: {organism_name} ({infraspecific_name}) -> taxid {fallback_taxid}")
                     taxid = fallback_taxid
                     lin_dict = taxfoo.get_lineage_as_dict(taxid, want_taxonomy)
                 else:
-                    print(f"WARNING: taxid {original_taxid} not found and fallback failed for organism '{organism_name}'.")
+                    print(f"    WARNING: taxid {original_taxid} not found and fallback failed for organism '{organism_name}'.")
 
             row = [acc, taxid]
             for rank in want_taxonomy:

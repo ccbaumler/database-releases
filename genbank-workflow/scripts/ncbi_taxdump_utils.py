@@ -321,21 +321,26 @@ def parse_names(filename):
     """
     Parse an NCBI names.dmp file.
     """
-#    taxid_to_names = dict()
     taxid_to_names = collections.defaultdict(list)
+    
     with xopen(filename, 'rt') as fp:
-        for n, line in enumerate(fp):
+        for line in fp:
             line = line.rstrip('\t|\n')
-            x = line.split('\t|\t')
+            parts = line.split('\t|\t')
+            if len(parts) < 4: continue
+            
+            taxid = int(parts[0])
+            name_entry = (parts[1], parts[2], parts[3]) # (name, uniqname, name_class)
+            name_class = parts[3]
 
-            taxid, name, uniqname, name_class = x
-            taxid = int(taxid)
-
-            if name_class in ('scientific name','includes','synonym'):
-#                taxid_to_names[taxid] = (name, uniqname, name_class)
-                taxid_to_names[taxid].append((name, uniqname, name_class))
+            if name_class == 'scientific name':
+                # Put scientific name at the FRONT of the list
+                taxid_to_names[taxid].insert(0, name_entry)
+            elif name_class in ('includes', 'synonym'):
+                # Put others at the BACK
+                taxid_to_names[taxid].append(name_entry)
+                
     return taxid_to_names
-
 
 def load_genbank_accessions_csv(filename):
     """
